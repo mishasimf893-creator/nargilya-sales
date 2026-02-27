@@ -26,6 +26,7 @@ async function saveToCloud(data) {
     const clean = {
       ...data,
       salesPlans: data.salesPlans || [],
+      dailyQuests: data.dailyQuests || [],
       employees: (data.employees || []).map(e => ({
         ...e,
         sales: (e.sales || []).map(s => ({ ...s, receiptPhoto: s.receiptPhoto ? "local" : null })),
@@ -108,6 +109,39 @@ const RANKS = [
   { min: 102100, title: "Мастер", icon: "🔥", color: "#f97316" },
   { min: 104200, title: "Легенда", icon: "💎", color: "#38bdf8" },
   { min: 108400, title: "Босс кальянной", icon: "👑", color: "#c471f5" },
+];
+
+// ═══ GAMIFICATION SYSTEM ═══
+// Quest templates for admin to create daily quests
+const QUEST_TEMPLATES = [
+  { id: "qt1", text: "Продай {n} кальянов", category: "hookah", icon: "🌬️", color: "#c471f5" },
+  { id: "qt2", text: "Продай {n} коктейлей", category: "cocktails", icon: "🍹", color: "#e879f9" },
+  { id: "qt3", text: "Продай {n} блюд с кухни", category: "kitchen", icon: "🍽️", color: "#f97316" },
+  { id: "qt4", text: "Собери {n} отзывов", category: "reviews", icon: "⭐", color: "#facc15" },
+  { id: "qt5", text: "Сделай {n} продаж (любых)", category: "any", icon: "🔥", color: "#22d3ee" },
+  { id: "qt6", text: "Заработай {n}₽ выручки", category: "revenue", icon: "💰", color: "#64d4aa" },
+];
+
+// Achievement definitions
+const ACHIEVEMENTS = [
+  { id: "first_sale", title: "Первая кровь", desc: "Первая продажа за смену", icon: "⚔️", check: (sales) => sales.length >= 1 },
+  { id: "triple", title: "Тройной удар", desc: "3 продажи подряд за 10 минут", icon: "⚡", check: (sales) => {
+    if (sales.length < 3) return false;
+    const last3 = sales.slice(-3);
+    return new Date(last3[2].timestamp) - new Date(last3[0].timestamp) < 600000;
+  }},
+  { id: "five_streak", title: "Серия x5", desc: "5 продаж за смену", icon: "🔥", check: (sales) => sales.length >= 5 },
+  { id: "ten_streak", title: "Не остановить!", desc: "10 продаж за смену", icon: "💥", check: (sales) => sales.length >= 10 },
+  { id: "hookah_master", title: "Дымный мастер", desc: "Продай 3 кальяна за смену", icon: "🌬️", check: (sales) => sales.filter(s => s.id?.startsWith("h")).length >= 3 },
+  { id: "cocktail_king", title: "Коктейльный король", desc: "Продай 5 коктейлей за смену", icon: "🍹", check: (sales) => sales.filter(s => s.id?.startsWith("c")).length >= 5 },
+  { id: "revenue_5k", title: "Золотой час", desc: "5000₽ выручки за смену", icon: "💰", check: (sales) => sales.reduce((s, x) => s + x.price, 0) >= 5000 },
+  { id: "revenue_10k", title: "Легенда дня", desc: "10000₽ выручки за смену", icon: "👑", check: (sales) => sales.reduce((s, x) => s + x.price, 0) >= 10000 },
+  { id: "all_cats", title: "Универсал", desc: "Продай из каждой категории", icon: "🌟", check: (sales) => {
+    const hasH = sales.some(s => s.id?.startsWith("h"));
+    const hasC = sales.some(s => s.id?.startsWith("c"));
+    const hasK = sales.some(s => s.id?.startsWith("k"));
+    return hasH && hasC && hasK;
+  }},
 ];
 
 function getRank(bonus) {
@@ -209,7 +243,7 @@ function Confetti({ active }) {
 /* ════════════════════════════════════════════ */
 /* ─── ADMIN PANEL ─── */
 /* ════════════════════════════════════════════ */
-function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans }) {
+function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans, dailyQuests, setDailyQuests }) {
   const [adminView, setAdminView] = useState("dashboard");
   const [selectedEmpId, setSelectedEmpId] = useState(null);
   const [viewingPhoto, setViewingPhoto] = useState(null);
@@ -227,6 +261,10 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
   const [planCategory, setPlanCategory] = useState("hookah");
   const [planTarget, setPlanTarget] = useState("");
   const [planPeriod, setPlanPeriod] = useState("month");
+  const [showQuestModal, setShowQuestModal] = useState(false);
+  const [questTemplate, setQuestTemplate] = useState("qt5");
+  const [questTarget, setQuestTarget] = useState("");
+  const [questBonusReward, setQuestBonusReward] = useState("100");
 
   const periodLabels = { all: "Всё время", today: "Сегодня", week: "Неделя", month: "Месяц" };
 
@@ -296,6 +334,48 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
 
   const deleteSalesPlan = (planId) => {
     setSalesPlans((prev) => prev.filter((p) => p.id !== planId));
+  };
+
+  const addDailyQuest = () => {
+    const target = parseInt(questTarget);
+    const reward = parseInt(questBonusReward);
+    if (!target || target <= 0) return;
+    const tpl = QUEST_TEMPLATES.find(t => t.id === questTemplate);
+    const quest = {
+      id: Date.now().toString(),
+      templateId: questTemplate,
+      text: tpl.text.replace("{n}", target),
+      category: tpl.category,
+      target,
+      icon: tpl.icon,
+      color: tpl.color,
+      reward: reward || 0,
+      createdAt: new Date().toISOString(),
+      date: new Date().toDateString(),
+    };
+    setDailyQuests((prev) => [...prev, quest]);
+    setShowQuestModal(false);
+    setQuestTarget("");
+    setQuestBonusReward("100");
+  };
+
+  const deleteDailyQuest = (questId) => {
+    setDailyQuests((prev) => prev.filter((q) => q.id !== questId));
+  };
+
+  // Get quest progress for a specific employee
+  const getQuestProgress = (quest, emp) => {
+    const now = new Date();
+    const todaySales = (emp?.sales || []).filter(s => new Date(s.timestamp).toDateString() === now.toDateString());
+    const todayReviews = (emp?.reviews || []).filter(r => new Date(r.timestamp).toDateString() === now.toDateString());
+    
+    if (quest.category === "hookah") return todaySales.filter(s => s.id?.startsWith("h")).length;
+    if (quest.category === "cocktails") return todaySales.filter(s => s.id?.startsWith("c")).length;
+    if (quest.category === "kitchen") return todaySales.filter(s => s.id?.startsWith("k")).length;
+    if (quest.category === "reviews") return todayReviews.length;
+    if (quest.category === "any") return todaySales.length;
+    if (quest.category === "revenue") return todaySales.reduce((s, x) => s + x.price, 0);
+    return 0;
   };
 
   // Calculate sales count for a plan
@@ -423,7 +503,7 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
 
       {/* Nav */}
       <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
-        {[{ k: "dashboard", l: "📊 Обзор" }, { k: "employees", l: "👥 Сотрудники" }, { k: "plans", l: "🎯 Планы" }, { k: "history", l: "📋 История" }].map((t) => (
+        {[{ k: "dashboard", l: "📊 Обзор" }, { k: "employees", l: "👥 Сотрудники" }, { k: "quests", l: "⚔️ Задания" }, { k: "plans", l: "🎯 Планы" }, { k: "history", l: "📋 История" }].map((t) => (
           <button key={t.k} onClick={() => { setAdminView(t.k); setSelectedEmpId(null); }} style={{ flex: 1, padding: "10px 6px", borderRadius: 12, cursor: "pointer", fontSize: "0.75rem", fontWeight: 700, fontFamily: "'DM Sans', sans-serif", background: adminView === t.k ? "linear-gradient(135deg, rgba(196,113,245,0.2), rgba(196,113,245,0.08))" : "rgba(255,255,255,0.1)", border: adminView === t.k ? "1px solid rgba(196,113,245,0.3)" : "1px solid rgba(255,255,255,0.1)", color: adminView === t.k ? "#c471f5" : "#6b7094" }}>{t.l}</button>
         ))}
       </div>
@@ -583,6 +663,70 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
               </div>
             ));
           })()}
+        </div>
+      )}
+
+      {/* DAILY QUESTS TAB */}
+      {adminView === "quests" && (
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <div style={{ fontSize: "0.8rem", color: "#8b8fa3", textTransform: "uppercase", letterSpacing: 2 }}>Ежедневные задания</div>
+            <button onClick={() => setShowQuestModal(true)} style={{ ...smallBtn("rgba(196,113,245,0.15)", "rgba(196,113,245,0.3)", "#c471f5"), fontWeight: 700 }}>+ Новое задание</button>
+          </div>
+
+          {dailyQuests.length === 0 && (
+            <div style={{ textAlign: "center", color: "#4a4e6e", padding: 40 }}>
+              <div style={{ fontSize: "2.5rem", marginBottom: 8 }}>⚔️</div>
+              <div style={{ marginBottom: 4 }}>Нет активных заданий</div>
+              <div style={{ fontSize: "0.75rem" }}>Создайте задания — сотрудники увидят их как игровые квесты!</div>
+            </div>
+          )}
+
+          {dailyQuests.map((quest) => {
+            const isToday = quest.date === new Date().toDateString();
+            return (
+              <div key={quest.id} style={{ ...cardStyle, borderRadius: 18, padding: 18, marginBottom: 12, opacity: isToday ? 1 : 0.5, border: isToday ? `1px solid ${quest.color}30` : cardStyle.border }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={{ width: 42, height: 42, borderRadius: 12, background: `${quest.color}20`, border: `1px solid ${quest.color}40`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.3rem" }}>{quest.icon}</div>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: "0.95rem" }}>{quest.text}</div>
+                      <div style={{ fontSize: "0.7rem", color: "#6b7094", display: "flex", gap: 8 }}>
+                        {quest.reward > 0 && <span style={{ color: "#22d3ee" }}>+{quest.reward}₽ награда</span>}
+                        <span>{isToday ? "Сегодня" : "Архив"}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <button onClick={() => deleteDailyQuest(quest.id)} style={{ background: "none", border: "none", color: "#ff5050", cursor: "pointer", fontSize: "0.9rem", padding: 4 }}>✕</button>
+                </div>
+
+                {/* Per-employee quest progress */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {employees.map(emp => {
+                    const prog = getQuestProgress(quest, emp);
+                    const pct = Math.min((prog / quest.target) * 100, 100);
+                    const done = prog >= quest.target;
+                    return (
+                      <div key={emp.id}>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.75rem", marginBottom: 4 }}>
+                          <span style={{ color: done ? "#22d3ee" : "#8b8fa3", fontWeight: done ? 700 : 400 }}>{done ? "✅ " : ""}{emp.name}</span>
+                          <span style={{ color: done ? "#22d3ee" : "#eef0ff", fontWeight: 700 }}>{quest.category === "revenue" ? formatMoney(prog) : prog} / {quest.category === "revenue" ? formatMoney(quest.target) : quest.target}</span>
+                        </div>
+                        <div style={{ height: 6, background: "rgba(255,255,255,0.06)", borderRadius: 3, overflow: "hidden" }}>
+                          <div style={{
+                            width: `${pct}%`, height: "100%",
+                            background: done ? "linear-gradient(90deg, #22d3ee, #38bdf8)" : `linear-gradient(90deg, ${quest.color}, ${quest.color}88)`,
+                            borderRadius: 3, transition: "width 0.5s ease",
+                            boxShadow: done ? "0 0 8px rgba(34,211,238,0.3)" : "none",
+                          }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -754,6 +898,49 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
           </div>
         </div>
       )}
+
+      {/* Create Daily Quest Modal */}
+      {showQuestModal && (
+        <div onClick={() => setShowQuestModal(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 9000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: "rgba(20,18,40,0.95)", backdropFilter: "blur(24px)", border: "1px solid rgba(196,113,245,0.3)", borderRadius: 24, padding: 28, width: "100%", maxWidth: 380 }}>
+            <div style={{ fontSize: "0.75rem", color: "#8b8fa3", textTransform: "uppercase", letterSpacing: 2, marginBottom: 16 }}>⚔️ Новое ежедневное задание</div>
+
+            <div style={{ fontSize: "0.8rem", color: "#6b7094", marginBottom: 8 }}>Тип задания</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
+              {QUEST_TEMPLATES.map(tpl => (
+                <button key={tpl.id} onClick={() => setQuestTemplate(tpl.id)} style={{
+                  padding: "12px 14px", borderRadius: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
+                  display: "flex", alignItems: "center", gap: 10, fontSize: "0.85rem", fontWeight: 600, textAlign: "left",
+                  background: questTemplate === tpl.id ? `${tpl.color}20` : "rgba(255,255,255,0.06)",
+                  border: questTemplate === tpl.id ? `1px solid ${tpl.color}50` : "1px solid rgba(255,255,255,0.08)",
+                  color: questTemplate === tpl.id ? tpl.color : "#8b8fa3",
+                }}>
+                  <span style={{ fontSize: "1.2rem" }}>{tpl.icon}</span>
+                  {tpl.text.replace("{n}", "N")}
+                </button>
+              ))}
+            </div>
+
+            <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: "0.8rem", color: "#6b7094", marginBottom: 8 }}>Цель</div>
+                <input type="number" value={questTarget} onChange={(e) => setQuestTarget(e.target.value)} placeholder={QUEST_TEMPLATES.find(t => t.id === questTemplate)?.category === "revenue" ? "5000" : "5"}
+                  style={{ width: "100%", padding: "14px 16px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(196,113,245,0.2)", borderRadius: 12, color: "#eef0ff", fontSize: "1rem", fontFamily: "'DM Sans', sans-serif", outline: "none" }} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: "0.8rem", color: "#6b7094", marginBottom: 8 }}>Награда ₽</div>
+                <input type="number" value={questBonusReward} onChange={(e) => setQuestBonusReward(e.target.value)} placeholder="100"
+                  style={{ width: "100%", padding: "14px 16px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(196,113,245,0.2)", borderRadius: 12, color: "#eef0ff", fontSize: "1rem", fontFamily: "'DM Sans', sans-serif", outline: "none" }} />
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => setShowQuestModal(false)} style={{ flex: 1, padding: 14, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12, color: "#8b8fa3", cursor: "pointer", fontWeight: 700, fontFamily: "'DM Sans', sans-serif" }}>Отмена</button>
+              <button onClick={addDailyQuest} style={{ flex: 1, padding: 14, background: questTarget > 0 ? "linear-gradient(135deg, #c471f5, #a855f7)" : "rgba(255,255,255,0.06)", border: "none", borderRadius: 12, color: questTarget > 0 ? "#0d0b1a" : "#4a4e6e", cursor: questTarget > 0 ? "pointer" : "default", fontWeight: 800, fontFamily: "'DM Sans', sans-serif" }}>Создать</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -783,6 +970,11 @@ export default function HookahSalesApp() {
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState(false);
   const [salesPlans, setSalesPlans] = useState([]);
+  const [dailyQuests, setDailyQuests] = useState([]);
+  const [achievementPopup, setAchievementPopup] = useState(null);
+  const [streakCount, setStreakCount] = useState(0);
+  const [lastSaleTime, setLastSaleTime] = useState(null);
+  const [comboTimer, setComboTimer] = useState(0);
 
   // Firebase real-time listener
   useEffect(() => {
@@ -792,6 +984,7 @@ export default function HookahSalesApp() {
         const merged = mergeWithLocalPhotos(data.employees || []);
         setEmployees(merged);
         if (data.salesPlans) setSalesPlans(data.salesPlans);
+        if (data.dailyQuests) setDailyQuests(data.dailyQuests);
         // Restore currentEmployee from localStorage
         const localCur = localStorage.getItem("nargilya-current-emp");
         if (localCur && !currentEmployee) setCurrentEmployee(localCur);
@@ -803,6 +996,7 @@ export default function HookahSalesApp() {
       const local = loadLocalPhotos();
       if (local?.employees) setEmployees(local.employees);
       if (local?.salesPlans) setSalesPlans(local.salesPlans);
+      if (local?.dailyQuests) setDailyQuests(local.dailyQuests);
       setLoading(false);
     });
     return () => unsub();
@@ -811,10 +1005,10 @@ export default function HookahSalesApp() {
   // Save to cloud when employees or salesPlans change
   useEffect(() => {
     if (loading) return;
-    saveToCloud({ employees, salesPlans });
+    saveToCloud({ employees, salesPlans, dailyQuests });
     // Also save full data with photos locally
-    saveLocalPhotos({ employees, salesPlans });
-  }, [employees, salesPlans]);
+    saveLocalPhotos({ employees, salesPlans, dailyQuests });
+  }, [employees, salesPlans, dailyQuests]);
 
   // Save currentEmployee to localStorage (device-specific)
   useEffect(() => {
@@ -888,6 +1082,40 @@ export default function HookahSalesApp() {
 
     setLastSale(item);
     setTimeout(() => setLastSale(null), 2000);
+
+    // ═══ GAMIFICATION: Streak & Combo (only cocktails & kitchen) ═══
+    const isComboItem = item.id?.startsWith("c") || item.id?.startsWith("k");
+    if (isComboItem) {
+      const now = Date.now();
+      if (lastSaleTime && now - lastSaleTime < 1800000) { // 30 min combo window
+        setStreakCount(prev => prev + 1);
+        setComboTimer(1800);
+      } else {
+        setStreakCount(1);
+        setComboTimer(1800);
+      }
+      setLastSaleTime(now);
+    }
+
+    // Check achievements after sale is added
+    const updatedEmp = employees.find(e => e.id === currentEmployee);
+    if (updatedEmp) {
+      const allTodaySales = [...todaySales, sale];
+      for (const ach of ACHIEVEMENTS) {
+        const wasEarned = (updatedEmp.earnedAchievements || []).includes(ach.id + "_" + new Date().toDateString());
+        if (!wasEarned && ach.check(allTodaySales)) {
+          setAchievementPopup(ach);
+          setTimeout(() => setAchievementPopup(null), 3500);
+          // Mark as earned today
+          setEmployees(prev => prev.map(e =>
+            e.id === currentEmployee
+              ? { ...e, earnedAchievements: [...(e.earnedAchievements || []), ach.id + "_" + new Date().toDateString()] }
+              : e
+          ));
+          break; // Show one at a time
+        }
+      }
+    }
 
     if (newRank.title !== prevRank.title) {
       setShowConfetti(true);
@@ -1018,6 +1246,37 @@ export default function HookahSalesApp() {
       CATEGORIES[catKey].items.some((item) => item.id === s.id)
     ).length;
 
+  // Combo timer countdown
+  useEffect(() => {
+    if (comboTimer <= 0) return;
+    const interval = setInterval(() => {
+      setComboTimer(prev => {
+        if (prev <= 1) { setStreakCount(0); return 0; }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [comboTimer]);
+
+  // Today's active quests
+  const todayQuests = dailyQuests.filter(q => q.date === new Date().toDateString());
+
+  // Quest progress for current employee
+  const getMyQuestProgress = (quest) => {
+    if (quest.category === "hookah") return todaySales.filter(s => s.id?.startsWith("h")).length;
+    if (quest.category === "cocktails") return todaySales.filter(s => s.id?.startsWith("c")).length;
+    if (quest.category === "kitchen") return todaySales.filter(s => s.id?.startsWith("k")).length;
+    if (quest.category === "reviews") return todayReviews.length;
+    if (quest.category === "any") return todaySales.length;
+    if (quest.category === "revenue") return todayRevenue;
+    return 0;
+  };
+
+  // Today's earned achievements
+  const todayAchievements = ACHIEVEMENTS.filter(ach =>
+    (employee?.earnedAchievements || []).includes(ach.id + "_" + new Date().toDateString())
+  );
+
   const tryAdminLogin = () => {
     if (adminPin === ADMIN_PIN) {
       setIsAdmin(true); setShowAdminLogin(false); setAdminPin(""); setAdminPinError(false);
@@ -1056,7 +1315,7 @@ export default function HookahSalesApp() {
 
   /* ═══ ADMIN MODE ═══ */
   if (isAdmin) {
-    return <AdminPanel employees={employees} setEmployees={setEmployees} onExit={() => setIsAdmin(false)} salesPlans={salesPlans} setSalesPlans={setSalesPlans} />;
+    return <AdminPanel employees={employees} setEmployees={setEmployees} onExit={() => setIsAdmin(false)} salesPlans={salesPlans} setSalesPlans={setSalesPlans} dailyQuests={dailyQuests} setDailyQuests={setDailyQuests} />;
   }
 
   return (
@@ -1159,6 +1418,26 @@ export default function HookahSalesApp() {
       `}</style>
 
       <Confetti active={showConfetti} />
+
+      {/* ═══ ACHIEVEMENT POPUP ═══ */}
+      {achievementPopup && (
+        <div style={{
+          position: "fixed", top: 60, left: "50%", transform: "translateX(-50%)",
+          zIndex: 9800, animation: "slideUp 0.4s ease, fadeIn 0.3s ease",
+          background: "linear-gradient(135deg, rgba(20,18,40,0.95), rgba(30,25,55,0.95))",
+          backdropFilter: "blur(24px)", border: "1px solid rgba(196,113,245,0.4)",
+          borderRadius: 20, padding: "16px 24px", display: "flex", alignItems: "center", gap: 14,
+          boxShadow: "0 8px 40px rgba(196,113,245,0.25), 0 0 80px rgba(196,113,245,0.08)",
+          maxWidth: 340, width: "90%",
+        }}>
+          <div style={{ fontSize: "2.2rem", animation: "pulse 0.5s ease" }}>{achievementPopup.icon}</div>
+          <div>
+            <div style={{ fontSize: "0.6rem", color: "#c471f5", textTransform: "uppercase", letterSpacing: 3, fontWeight: 700, marginBottom: 2 }}>🏆 Достижение!</div>
+            <div style={{ fontWeight: 800, fontSize: "1rem", color: "#eef0ff" }}>{achievementPopup.title}</div>
+            <div style={{ fontSize: "0.75rem", color: "#8b8fa3" }}>{achievementPopup.desc}</div>
+          </div>
+        </div>
+      )}
 
       {/* Global Photo Viewer Modal */}
       {viewingPhoto && (
@@ -1666,6 +1945,120 @@ export default function HookahSalesApp() {
                     </div>
                   )}
                 </div>
+
+                {/* ═══ STREAK & COMBO BAR ═══ */}
+                {streakCount > 1 && (
+                  <div style={{
+                    background: streakCount >= 5 ? "linear-gradient(135deg, rgba(249,115,22,0.15), rgba(234,179,8,0.1))" : "linear-gradient(135deg, rgba(196,113,245,0.1), rgba(56,189,248,0.06))",
+                    border: streakCount >= 5 ? "1px solid rgba(249,115,22,0.3)" : "1px solid rgba(196,113,245,0.2)",
+                    borderRadius: 16, padding: "12px 16px", marginBottom: 16,
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    animation: "saleFlash 0.4s ease",
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <div style={{ fontSize: "1.5rem", animation: "pulse 1s ease infinite" }}>
+                        {streakCount >= 10 ? "💥" : streakCount >= 5 ? "🔥" : streakCount >= 3 ? "⚡" : "✨"}
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 800, fontSize: "0.95rem", color: streakCount >= 5 ? "#f97316" : "#c471f5" }}>
+                          КОМБО x{streakCount}!
+                        </div>
+                        <div style={{ fontSize: "0.65rem", color: "#8b8fa3" }}>
+                          {streakCount >= 10 ? "НЕВЕРОЯТНО!" : streakCount >= 5 ? "Огненная серия!" : "Коктейли + Кухня 🍹🍽️"}
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: "0.7rem", color: "#6b7094" }}>Таймер</div>
+                      <div style={{ fontFamily: "'Outfit', sans-serif", fontWeight: 800, fontSize: "1rem", color: comboTimer < 300 ? "#ff5050" : "#22d3ee" }}>
+                        {Math.floor(comboTimer / 60)}:{String(comboTimer % 60).padStart(2, "0")}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ═══ DAILY QUESTS TRACKER (Game-style quest bar) ═══ */}
+                {todayQuests.length > 0 && (
+                  <div style={{
+                    background: "linear-gradient(135deg, rgba(20,18,40,0.7), rgba(30,25,55,0.5))",
+                    border: "1px solid rgba(196,113,245,0.15)",
+                    borderRadius: 20, padding: "16px 18px", marginBottom: 16,
+                    position: "relative", overflow: "hidden",
+                  }}>
+                    {/* Animated background shimmer */}
+                    <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2, background: "linear-gradient(90deg, transparent, rgba(196,113,245,0.3), rgba(56,189,248,0.3), transparent)", backgroundSize: "200% 100%", animation: "shimmer 3s linear infinite" }} />
+
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                      <span style={{ fontSize: "1.1rem" }}>⚔️</span>
+                      <span style={{ fontSize: "0.75rem", color: "#c471f5", textTransform: "uppercase", letterSpacing: 2, fontWeight: 700 }}>Ежедневные квесты</span>
+                      <span style={{ marginLeft: "auto", fontSize: "0.7rem", color: "#22d3ee", fontWeight: 700 }}>
+                        {todayQuests.filter(q => getMyQuestProgress(q) >= q.target).length}/{todayQuests.length}
+                      </span>
+                    </div>
+
+                    {todayQuests.map((quest, qi) => {
+                      const prog = getMyQuestProgress(quest);
+                      const pct = Math.min((prog / quest.target) * 100, 100);
+                      const done = prog >= quest.target;
+                      return (
+                        <div key={quest.id} style={{ marginBottom: qi < todayQuests.length - 1 ? 10 : 0 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
+                            <div style={{
+                              width: 28, height: 28, borderRadius: 8,
+                              background: done ? "rgba(34,211,238,0.2)" : `${quest.color}15`,
+                              border: done ? "1px solid rgba(34,211,238,0.4)" : `1px solid ${quest.color}30`,
+                              display: "flex", alignItems: "center", justifyContent: "center",
+                              fontSize: "0.85rem",
+                            }}>{done ? "✅" : quest.icon}</div>
+                            <span style={{ flex: 1, fontSize: "0.8rem", fontWeight: 600, color: done ? "#22d3ee" : "#eef0ff", textDecoration: done ? "line-through" : "none", opacity: done ? 0.7 : 1 }}>
+                              {quest.text}
+                            </span>
+                            <span style={{ fontSize: "0.75rem", fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: done ? "#22d3ee" : quest.color }}>
+                              {quest.category === "revenue" ? formatMoney(prog) : prog}/{quest.category === "revenue" ? formatMoney(quest.target) : quest.target}
+                            </span>
+                          </div>
+                          {/* Game-style XP bar */}
+                          <div style={{ height: 8, background: "rgba(255,255,255,0.04)", borderRadius: 4, overflow: "hidden", position: "relative" }}>
+                            <div style={{
+                              width: `${pct}%`, height: "100%",
+                              background: done
+                                ? "linear-gradient(90deg, #22d3ee, #38bdf8)"
+                                : `linear-gradient(90deg, ${quest.color}, ${quest.color}88)`,
+                              borderRadius: 4,
+                              transition: "width 0.8s cubic-bezier(0.4, 0, 0.2, 1)",
+                              boxShadow: done ? "0 0 10px rgba(34,211,238,0.4)" : `0 0 8px ${quest.color}30`,
+                              position: "relative",
+                            }}>
+                              {/* Animated shimmer on progress bar */}
+                              {!done && pct > 0 && (
+                                <div style={{ position: "absolute", top: 0, right: 0, width: 20, height: "100%", background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent)", animation: "shimmer 2s linear infinite" }} />
+                              )}
+                            </div>
+                          </div>
+                          {quest.reward > 0 && done && (
+                            <div style={{ fontSize: "0.65rem", color: "#22d3ee", marginTop: 3, textAlign: "right" }}>🎁 +{quest.reward}₽ награда</div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* ═══ TODAY'S ACHIEVEMENTS ═══ */}
+                {todayAchievements.length > 0 && (
+                  <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
+                    {todayAchievements.map(ach => (
+                      <div key={ach.id} style={{
+                        flexShrink: 0, display: "flex", alignItems: "center", gap: 6,
+                        background: "rgba(196,113,245,0.1)", border: "1px solid rgba(196,113,245,0.2)",
+                        borderRadius: 12, padding: "6px 12px",
+                      }}>
+                        <span style={{ fontSize: "1rem" }}>{ach.icon}</span>
+                        <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "#f0abfc", whiteSpace: "nowrap" }}>{ach.title}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {/* Quick stats pills */}
                 <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
