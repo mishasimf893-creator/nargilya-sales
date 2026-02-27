@@ -92,6 +92,18 @@ function simpleHash(str) {
   return "h_" + Math.abs(hash).toString(36);
 }
 
+// Simple image hash for duplicate receipt detection
+function imageHash(dataUrl) {
+  let hash = 0;
+  // Sample every 100th char for speed (base64 images are large)
+  for (let i = 0; i < dataUrl.length; i += 100) {
+    const char = dataUrl.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return "img_" + Math.abs(hash).toString(36);
+}
+
 // Brute force protection
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOCKOUT_DURATION = 300000; // 5 minutes
@@ -283,9 +295,11 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
   const [questTemplate, setQuestTemplate] = useState("qt5");
   const [questTarget, setQuestTarget] = useState("");
   const [questBonusReward, setQuestBonusReward] = useState("100");
+  const [questAssignee, setQuestAssignee] = useState("all");
   const [showChangePinModal, setShowChangePinModal] = useState(false);
   const [newPinValue, setNewPinValue] = useState("");
   const [confirmPinValue, setConfirmPinValue] = useState("");
+  const [planReward, setPlanReward] = useState("");
 
   const periodLabels = { all: "Всё время", today: "Сегодня", week: "Неделя", month: "Месяц" };
 
@@ -340,17 +354,21 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
 
   const addSalesPlan = () => {
     const target = parseInt(planTarget);
+    const reward = parseInt(planReward);
     if (!target || target <= 0) return;
     const plan = {
       id: Date.now().toString(),
       category: planCategory,
       target,
       period: planPeriod,
+      reward: reward || 0,
       createdAt: new Date().toISOString(),
+      rewardPaid: {}, // track who got paid
     };
     setSalesPlans((prev) => [...prev, plan]);
     setShowPlanModal(false);
     setPlanTarget("");
+    setPlanReward("");
   };
 
   const deleteSalesPlan = (planId) => {
@@ -371,13 +389,16 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
       icon: tpl.icon,
       color: tpl.color,
       reward: reward || 0,
+      assignee: questAssignee, // "all" or employee id
       createdAt: new Date().toISOString(),
       date: new Date().toDateString(),
+      rewardPaid: {}, // track who got paid: { empId: true }
     };
     setDailyQuests((prev) => [...prev, quest]);
     setShowQuestModal(false);
     setQuestTarget("");
     setQuestBonusReward("100");
+    setQuestAssignee("all");
   };
 
   const deleteDailyQuest = (questId) => {
@@ -713,9 +734,12 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
                     <div style={{ width: 42, height: 42, borderRadius: 12, background: `${quest.color}20`, border: `1px solid ${quest.color}40`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.3rem" }}>{quest.icon}</div>
                     <div>
                       <div style={{ fontWeight: 700, fontSize: "0.95rem" }}>{quest.text}</div>
-                      <div style={{ fontSize: "0.7rem", color: "#6b7094", display: "flex", gap: 8 }}>
-                        {quest.reward > 0 && <span style={{ color: "#22d3ee" }}>+{quest.reward}₽ награда</span>}
+                      <div style={{ fontSize: "0.7rem", color: "#6b7094", display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        {quest.reward > 0 && <span style={{ color: "#22d3ee" }}>+{quest.reward}₽ премия</span>}
                         <span>{isToday ? "Сегодня" : "Архив"}</span>
+                        <span style={{ color: quest.assignee === "all" ? "#8b8fa3" : "#f0abfc" }}>
+                          {quest.assignee === "all" ? "👥 Всем" : `👤 ${employees.find(e => e.id === quest.assignee)?.name || "?"}`}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -724,7 +748,7 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
 
                 {/* Per-employee quest progress */}
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {employees.map(emp => {
+                  {employees.filter(emp => quest.assignee === "all" || quest.assignee === emp.id).map(emp => {
                     const prog = getQuestProgress(quest, emp);
                     const pct = Math.min((prog / quest.target) * 100, 100);
                     const done = prog >= quest.target;
@@ -780,7 +804,7 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
                     <span style={{ fontSize: "1.4rem" }}>{catInfo?.emoji || "📦"}</span>
                     <div>
                       <div style={{ fontWeight: 700, fontSize: "0.95rem" }}>{catInfo?.name || plan.category}</div>
-                      <div style={{ fontSize: "0.7rem", color: "#6b7094" }}>{periodLabel}</div>
+                      <div style={{ fontSize: "0.7rem", color: "#6b7094" }}>{periodLabel}{plan.reward > 0 ? ` · 💰 ${plan.reward}₽` : ""}</div>
                     </div>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -892,13 +916,26 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
             </div>
 
             <div style={{ fontSize: "0.8rem", color: "#6b7094", marginBottom: 8 }}>Цель (количество продаж)</div>
-            <input
-              type="number"
-              value={planTarget}
-              onChange={(e) => setPlanTarget(e.target.value)}
-              placeholder="Например: 50"
-              style={{ width: "100%", padding: "14px 16px", marginBottom: 16, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(196,113,245,0.2)", borderRadius: 12, color: "#eef0ff", fontSize: "1rem", fontFamily: "'DM Sans', sans-serif", outline: "none" }}
-            />
+            <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+              <div style={{ flex: 1 }}>
+                <input
+                  type="number"
+                  value={planTarget}
+                  onChange={(e) => setPlanTarget(e.target.value)}
+                  placeholder="Кол-во: 50"
+                  style={{ width: "100%", padding: "14px 16px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(196,113,245,0.2)", borderRadius: 12, color: "#eef0ff", fontSize: "1rem", fontFamily: "'DM Sans', sans-serif", outline: "none" }}
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <input
+                  type="number"
+                  value={planReward}
+                  onChange={(e) => setPlanReward(e.target.value)}
+                  placeholder="Премия ₽"
+                  style={{ width: "100%", padding: "14px 16px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(34,211,238,0.2)", borderRadius: 12, color: "#eef0ff", fontSize: "1rem", fontFamily: "'DM Sans', sans-serif", outline: "none" }}
+                />
+              </div>
+            </div>
 
             <div style={{ fontSize: "0.8rem", color: "#6b7094", marginBottom: 8 }}>Период</div>
             <div style={{ display: "flex", gap: 6, marginBottom: 20 }}>
@@ -924,8 +961,28 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
       {/* Create Daily Quest Modal */}
       {showQuestModal && (
         <div onClick={() => setShowQuestModal(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 9000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: "rgba(20,18,40,0.95)", backdropFilter: "blur(24px)", border: "1px solid rgba(196,113,245,0.3)", borderRadius: 24, padding: 28, width: "100%", maxWidth: 380 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: "rgba(20,18,40,0.95)", backdropFilter: "blur(24px)", border: "1px solid rgba(196,113,245,0.3)", borderRadius: 24, padding: 28, width: "100%", maxWidth: 380, maxHeight: "90vh", overflowY: "auto" }}>
             <div style={{ fontSize: "0.75rem", color: "#8b8fa3", textTransform: "uppercase", letterSpacing: 2, marginBottom: 16 }}>⚔️ Новое ежедневное задание</div>
+
+            <div style={{ fontSize: "0.8rem", color: "#6b7094", marginBottom: 8 }}>Кому</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
+              <button onClick={() => setQuestAssignee("all")} style={{
+                padding: "8px 14px", borderRadius: 10, cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
+                fontSize: "0.8rem", fontWeight: 700,
+                background: questAssignee === "all" ? "rgba(196,113,245,0.2)" : "rgba(255,255,255,0.06)",
+                border: questAssignee === "all" ? "1px solid rgba(196,113,245,0.4)" : "1px solid rgba(255,255,255,0.08)",
+                color: questAssignee === "all" ? "#c471f5" : "#6b7094",
+              }}>👥 Всем</button>
+              {employees.map(emp => (
+                <button key={emp.id} onClick={() => setQuestAssignee(emp.id)} style={{
+                  padding: "8px 14px", borderRadius: 10, cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
+                  fontSize: "0.8rem", fontWeight: 600,
+                  background: questAssignee === emp.id ? "rgba(34,211,238,0.15)" : "rgba(255,255,255,0.06)",
+                  border: questAssignee === emp.id ? "1px solid rgba(34,211,238,0.3)" : "1px solid rgba(255,255,255,0.08)",
+                  color: questAssignee === emp.id ? "#22d3ee" : "#8b8fa3",
+                }}>{emp.name}</button>
+              ))}
+            </div>
 
             <div style={{ fontSize: "0.8rem", color: "#6b7094", marginBottom: 8 }}>Тип задания</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
@@ -950,14 +1007,14 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
                   style={{ width: "100%", padding: "14px 16px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(196,113,245,0.2)", borderRadius: 12, color: "#eef0ff", fontSize: "1rem", fontFamily: "'DM Sans', sans-serif", outline: "none" }} />
               </div>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: "0.8rem", color: "#6b7094", marginBottom: 8 }}>Награда ₽</div>
+                <div style={{ fontSize: "0.8rem", color: "#6b7094", marginBottom: 8 }}>Премия ₽</div>
                 <input type="number" value={questBonusReward} onChange={(e) => setQuestBonusReward(e.target.value)} placeholder="100"
                   style={{ width: "100%", padding: "14px 16px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(196,113,245,0.2)", borderRadius: 12, color: "#eef0ff", fontSize: "1rem", fontFamily: "'DM Sans', sans-serif", outline: "none" }} />
               </div>
             </div>
 
             <div style={{ display: "flex", gap: 10 }}>
-              <button onClick={() => setShowQuestModal(false)} style={{ flex: 1, padding: 14, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12, color: "#8b8fa3", cursor: "pointer", fontWeight: 700, fontFamily: "'DM Sans', sans-serif" }}>Отмена</button>
+              <button onClick={() => { setShowQuestModal(false); setQuestAssignee("all"); }} style={{ flex: 1, padding: 14, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12, color: "#8b8fa3", cursor: "pointer", fontWeight: 700, fontFamily: "'DM Sans', sans-serif" }}>Отмена</button>
               <button onClick={addDailyQuest} style={{ flex: 1, padding: 14, background: questTarget > 0 ? "linear-gradient(135deg, #c471f5, #a855f7)" : "rgba(255,255,255,0.06)", border: "none", borderRadius: 12, color: questTarget > 0 ? "#0d0b1a" : "#4a4e6e", cursor: questTarget > 0 ? "pointer" : "default", fontWeight: 800, fontFamily: "'DM Sans', sans-serif" }}>Создать</button>
             </div>
           </div>
@@ -1013,6 +1070,9 @@ export default function HookahSalesApp() {
   const [viewingPhoto, setViewingPhoto] = useState(null);
   const [pendingSaleItem, setPendingSaleItem] = useState(null);
   const [receiptPhoto, setReceiptPhoto] = useState(null);
+  const [saleQuantity, setSaleQuantity] = useState(1);
+  const [usedReceiptHashes, setUsedReceiptHashes] = useState([]);
+  const [receiptDuplicateError, setReceiptDuplicateError] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminPin, setAdminPin] = useState("");
   const [showAdminLogin, setShowAdminLogin] = useState(false);
@@ -1129,6 +1189,7 @@ export default function HookahSalesApp() {
       timestamp: new Date().toISOString(),
       saleId: Date.now().toString(),
       receiptPhoto: photo || null,
+      receiptHash: photo ? imageHash(photo) : null,
     };
 
     const prevBonus = totalBonus;
@@ -1179,6 +1240,73 @@ export default function HookahSalesApp() {
       }
     }
 
+    // ═══ AUTO-PAY: Quest rewards ═══
+    const allSalesAfter = [...todaySales, sale];
+    const todayRevAfter = allSalesAfter.reduce((s, x) => s + x.price, 0);
+    const todayRevsAfter = todayReviews.length;
+
+    setDailyQuests(prev => prev.map(quest => {
+      if (quest.date !== new Date().toDateString()) return quest;
+      if (quest.reward <= 0) return quest;
+      if (quest.assignee !== "all" && quest.assignee !== currentEmployee) return quest;
+      if (quest.rewardPaid?.[currentEmployee]) return quest;
+
+      // Calculate progress
+      let prog = 0;
+      if (quest.category === "hookah") prog = allSalesAfter.filter(s => s.id?.startsWith("h")).length;
+      else if (quest.category === "cocktails") prog = allSalesAfter.filter(s => s.id?.startsWith("c")).length;
+      else if (quest.category === "kitchen") prog = allSalesAfter.filter(s => s.id?.startsWith("k")).length;
+      else if (quest.category === "reviews") prog = todayRevsAfter;
+      else if (quest.category === "any") prog = allSalesAfter.length;
+      else if (quest.category === "revenue") prog = todayRevAfter;
+
+      if (prog >= quest.target) {
+        // Pay reward — add bonus sale
+        const rewardSale = {
+          id: "reward", name: `🎁 Премия: ${quest.text}`, price: 0,
+          bonus: quest.reward, baseBonus: quest.reward, multiplier: 0,
+          timestamp: new Date().toISOString(), saleId: "qr_" + quest.id + "_" + Date.now(),
+        };
+        setEmployees(p => p.map(e => e.id === currentEmployee ? { ...e, sales: [...e.sales, rewardSale] } : e));
+        return { ...quest, rewardPaid: { ...quest.rewardPaid, [currentEmployee]: true } };
+      }
+      return quest;
+    }));
+
+    // ═══ AUTO-PAY: Plan rewards ═══
+    setSalesPlans(prev => prev.map(plan => {
+      if (plan.reward <= 0) return plan;
+      if (plan.rewardPaid?.[currentEmployee]) return plan;
+
+      // Check if this employee's sale contributes to the plan
+      const catItems = CATEGORIES[plan.category]?.items || [];
+      const inCat = catItems.some(ci => ci.id === sale.id);
+      if (!inCat) return plan;
+
+      // Check overall plan progress
+      const now = new Date();
+      const allPlanSales = employees.flatMap(e => (e.sales || []).filter(s => {
+        const d = new Date(s.timestamp);
+        const inCategory = catItems.some(ci => ci.id === s.id);
+        if (!inCategory) return false;
+        if (plan.period === "today") return d.toDateString() === now.toDateString();
+        if (plan.period === "week") return now - d < 7 * 86400000;
+        if (plan.period === "month") return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+        return true;
+      }));
+      // +1 for current sale that's being added
+      if (allPlanSales.length + 1 >= plan.target) {
+        const rewardSale = {
+          id: "reward", name: `🏆 План выполнен: ${CATEGORIES[plan.category]?.name || plan.category}`, price: 0,
+          bonus: plan.reward, baseBonus: plan.reward, multiplier: 0,
+          timestamp: new Date().toISOString(), saleId: "pr_" + plan.id + "_" + Date.now(),
+        };
+        setEmployees(p => p.map(e => e.id === currentEmployee ? { ...e, sales: [...e.sales, rewardSale] } : e));
+        return { ...plan, rewardPaid: { ...plan.rewardPaid, [currentEmployee]: true } };
+      }
+      return plan;
+    }));
+
     if (newRank.title !== prevRank.title) {
       setShowConfetti(true);
       setTimeout(() => setShowConfetti(false), 3000);
@@ -1188,25 +1316,48 @@ export default function HookahSalesApp() {
   const openReceiptModal = (item) => {
     setPendingSaleItem(item);
     setReceiptPhoto(null);
+    setSaleQuantity(1);
+    setReceiptDuplicateError(false);
   };
 
   const confirmSale = () => {
     if (!pendingSaleItem) return;
-    addSale(pendingSaleItem, receiptPhoto);
+    for (let i = 0; i < saleQuantity; i++) {
+      addSale(pendingSaleItem, i === 0 ? receiptPhoto : null);
+    }
     setPendingSaleItem(null);
     setReceiptPhoto(null);
+    setSaleQuantity(1);
+    setReceiptDuplicateError(false);
   };
 
   const cancelSale = () => {
     setPendingSaleItem(null);
     setReceiptPhoto(null);
+    setSaleQuantity(1);
+    setReceiptDuplicateError(false);
   };
 
   const handleReceiptUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    setReceiptDuplicateError(false);
     const reader = new FileReader();
-    reader.onload = (ev) => setReceiptPhoto(ev.target.result);
+    reader.onload = (ev) => {
+      const dataUrl = ev.target.result;
+      const hash = imageHash(dataUrl);
+      // Check against all existing receipt hashes
+      const allHashes = employees.flatMap(emp =>
+        (emp.sales || []).filter(s => s.receiptHash).map(s => s.receiptHash)
+      );
+      if (allHashes.includes(hash) || usedReceiptHashes.includes(hash)) {
+        setReceiptDuplicateError(true);
+        setReceiptPhoto(null);
+        return;
+      }
+      setReceiptPhoto(dataUrl);
+      setUsedReceiptHashes(prev => [...prev, hash]);
+    };
     reader.readAsDataURL(file);
   };
 
@@ -1320,8 +1471,8 @@ export default function HookahSalesApp() {
     return () => clearInterval(interval);
   }, [comboTimer]);
 
-  // Today's active quests
-  const todayQuests = dailyQuests.filter(q => q.date === new Date().toDateString());
+  // Today's active quests (for current employee or all)
+  const todayQuests = dailyQuests.filter(q => q.date === new Date().toDateString() && (q.assignee === "all" || q.assignee === currentEmployee));
 
   // Quest progress for current employee
   const getMyQuestProgress = (quest) => {
@@ -2169,7 +2320,9 @@ export default function HookahSalesApp() {
                             </div>
                           </div>
                           {quest.reward > 0 && done && (
-                            <div style={{ fontSize: "0.65rem", color: "#22d3ee", marginTop: 3, textAlign: "right" }}>🎁 +{quest.reward}₽ награда</div>
+                            <div style={{ fontSize: "0.65rem", color: quest.rewardPaid?.[currentEmployee] ? "#22d3ee" : "#f97316", marginTop: 3, textAlign: "right" }}>
+                              {quest.rewardPaid?.[currentEmployee] ? "✅ +" + quest.reward + "₽ начислено" : "🎁 +" + quest.reward + "₽ премия"}
+                            </div>
                           )}
                         </div>
                       );
@@ -2386,6 +2539,35 @@ export default function HookahSalesApp() {
                         </div>
                       </div>
 
+                      {/* Quantity selector */}
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 16, marginBottom: 20 }}>
+                        <button onClick={() => setSaleQuantity(q => Math.max(1, q - 1))} style={{
+                          width: 44, height: 44, borderRadius: 12, border: "1px solid rgba(196,113,245,0.3)",
+                          background: "rgba(196,113,245,0.1)", color: "#c471f5", fontSize: "1.3rem", fontWeight: 800,
+                          cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                          fontFamily: "'DM Sans', sans-serif", opacity: saleQuantity <= 1 ? 0.3 : 1,
+                        }}>−</button>
+                        <div style={{ textAlign: "center", minWidth: 60 }}>
+                          <div style={{ fontFamily: "'Outfit', sans-serif", fontSize: "2rem", fontWeight: 900, color: "#eef0ff", lineHeight: 1 }}>{saleQuantity}</div>
+                          <div style={{ fontSize: "0.65rem", color: "#6b7094", marginTop: 2 }}>шт.</div>
+                        </div>
+                        <button onClick={() => setSaleQuantity(q => Math.min(20, q + 1))} style={{
+                          width: 44, height: 44, borderRadius: 12, border: "1px solid rgba(196,113,245,0.3)",
+                          background: "rgba(196,113,245,0.1)", color: "#c471f5", fontSize: "1.3rem", fontWeight: 800,
+                          cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                          fontFamily: "'DM Sans', sans-serif",
+                        }}>+</button>
+                      </div>
+
+                      {saleQuantity > 1 && (
+                        <div style={{ textAlign: "center", marginBottom: 16, padding: "10px 14px", background: "rgba(34,211,238,0.08)", border: "1px solid rgba(34,211,238,0.15)", borderRadius: 12 }}>
+                          <div style={{ fontSize: "0.75rem", color: "#6b7094" }}>Итого</div>
+                          <div style={{ fontSize: "1.1rem", fontWeight: 800, color: "#22d3ee" }}>
+                            {formatMoney(pendingSaleItem.price * saleQuantity)} · бонус +{pendingSaleItem.bonus * saleQuantity}₽
+                          </div>
+                        </div>
+                      )}
+
                       {/* Receipt Photo Upload */}
                       <label
                         style={{
@@ -2428,10 +2610,21 @@ export default function HookahSalesApp() {
                         <input
                           type="file"
                           accept="image/*"
+                          capture="environment"
                           onChange={handleReceiptUpload}
                           style={{ display: "none" }}
                         />
                       </label>
+
+                      {receiptDuplicateError && (
+                        <div style={{
+                          padding: "12px 16px", marginBottom: 14, borderRadius: 12,
+                          background: "rgba(255,80,80,0.1)", border: "1px solid rgba(255,80,80,0.3)",
+                          color: "#ff5050", fontSize: "0.8rem", fontWeight: 600, textAlign: "center",
+                        }}>
+                          ⚠️ Этот чек уже был загружен ранее! Сделайте новое фото.
+                        </div>
+                      )}
 
                       {receiptPhoto && (
                         <button
