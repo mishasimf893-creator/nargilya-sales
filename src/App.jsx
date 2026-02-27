@@ -1400,9 +1400,17 @@ export default function HookahSalesApp() {
     return (
       <div style={{ minHeight: "100vh", background: "#0d0b1a", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif", position: "relative", overflow: "hidden" }}>
         <div style={{ position: "absolute", top: "30%", left: "50%", transform: "translate(-50%, -50%)", width: 300, height: 300, background: "radial-gradient(circle, rgba(196,113,245,0.08) 0%, transparent 70%)", borderRadius: "50%", pointerEvents: "none" }} />
-        <div style={{ fontSize: "3.5rem", marginBottom: 16, animation: "gentleFloat 2s ease-in-out infinite", filter: "drop-shadow(0 0 20px rgba(196,113,245,0.3))" }}>🌬️</div>
-        <div style={{ color: "#f0abfc", fontSize: "1rem", fontWeight: 700, letterSpacing: 3 }}>ЗАГРУЗКА...</div>
-        <div style={{ color: "#6b7094", fontSize: "0.75rem", marginTop: 8 }}>Подключение к облаку</div>
+        <svg width="64" height="64" viewBox="0 0 100 100" fill="none" style={{ marginBottom: 16, animation: "gentleFloat 2s ease-in-out infinite", filter: "drop-shadow(0 0 24px rgba(196,113,245,0.35))" }}>
+          <defs>
+            <linearGradient id="lgLoad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor="#c471f5"/><stop offset="50%" stopColor="#f0abfc"/><stop offset="100%" stopColor="#38bdf8"/>
+            </linearGradient>
+          </defs>
+          <rect x="20" y="40" width="60" height="52" rx="16" stroke="url(#lgLoad)" strokeWidth="2" fill="rgba(196,113,245,0.1)"/>
+          <text x="50" y="77" textAnchor="middle" fontFamily="'Outfit', sans-serif" fontSize="36" fontWeight="900" fill="url(#lgLoad)">Н</text>
+        </svg>
+        <div style={{ fontFamily: "'Outfit', sans-serif", color: "#c471f5", fontSize: "1.2rem", fontWeight: 800, letterSpacing: 6, marginBottom: 8 }}>НАРГИЛИЯ</div>
+        <div style={{ color: "#6b7094", fontSize: "0.75rem", marginTop: 4, letterSpacing: 2 }}>подключение...</div>
         <style>{`@keyframes gentleFloat { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)} }`}</style>
       </div>
     );
@@ -1610,25 +1618,60 @@ export default function HookahSalesApp() {
         {!currentEmployee ? (
           <div style={{ padding: "40px 24px", animation: "slideUp 0.5s ease" }}>
             <div style={{ textAlign: "center", marginBottom: 48 }}>
-              <div style={{ fontSize: "3.5rem", marginBottom: 12 }}>🌬️</div>
+              {/* SVG Logo — Smoke N */}
+              <div style={{ display: "inline-block", marginBottom: 16, position: "relative" }}>
+                <svg width="80" height="80" viewBox="0 0 100 100" fill="none" style={{ filter: "drop-shadow(0 0 24px rgba(196,113,245,0.35))" }}>
+                  <defs>
+                    <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                      <stop offset="0%" stopColor="#c471f5"/>
+                      <stop offset="50%" stopColor="#f0abfc"/>
+                      <stop offset="100%" stopColor="#38bdf8"/>
+                    </linearGradient>
+                    <linearGradient id="smokeGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+                      <stop offset="0%" stopColor="#c471f5" stopOpacity="0.6"/>
+                      <stop offset="100%" stopColor="#38bdf8" stopOpacity="0.1"/>
+                    </linearGradient>
+                  </defs>
+                  {/* Smoke wisps */}
+                  <path d="M50 8 C45 18, 30 15, 35 28 C38 36, 28 38, 32 48" stroke="url(#smokeGrad)" strokeWidth="2.5" fill="none" strokeLinecap="round" opacity="0.7">
+                    <animate attributeName="d" dur="4s" repeatCount="indefinite" values="M50 8 C45 18, 30 15, 35 28 C38 36, 28 38, 32 48;M50 8 C55 16, 32 20, 38 30 C42 38, 25 42, 30 48;M50 8 C45 18, 30 15, 35 28 C38 36, 28 38, 32 48"/>
+                  </path>
+                  <path d="M56 12 C60 20, 68 22, 62 34 C58 42, 66 44, 60 50" stroke="url(#smokeGrad)" strokeWidth="2" fill="none" strokeLinecap="round" opacity="0.5">
+                    <animate attributeName="d" dur="5s" repeatCount="indefinite" values="M56 12 C60 20, 68 22, 62 34 C58 42, 66 44, 60 50;M56 12 C52 22, 72 18, 65 32 C60 40, 70 40, 63 50;M56 12 C60 20, 68 22, 62 34 C58 42, 66 44, 60 50"/>
+                  </path>
+                  {/* Main shape — rounded square */}
+                  <rect x="20" y="40" width="60" height="52" rx="16" fill="url(#logoGrad)" opacity="0.15"/>
+                  <rect x="20" y="40" width="60" height="52" rx="16" stroke="url(#logoGrad)" strokeWidth="2" fill="none"/>
+                  {/* Letter Н */}
+                  <text x="50" y="77" textAnchor="middle" fontFamily="'Outfit', sans-serif" fontSize="36" fontWeight="900" fill="url(#logoGrad)">Н</text>
+                </svg>
+              </div>
               <h1
                 style={{
-                  fontFamily: "'Outfit', serif",
-                  fontSize: "2rem",
+                  fontFamily: "'Outfit', sans-serif",
+                  fontSize: "1.8rem",
                   fontWeight: 900,
-                  background: "linear-gradient(135deg, #c471f5, #f0abfc, #38bdf8, #c471f5)",
+                  letterSpacing: 6,
+                  background: "linear-gradient(135deg, #c471f5 0%, #f0abfc 40%, #38bdf8 70%, #c471f5 100%)",
                   backgroundSize: "200% auto",
                   WebkitBackgroundClip: "text",
                   WebkitTextFillColor: "transparent",
-                  animation: "shimmer 3s linear infinite",
-                  marginBottom: 8,
+                  animation: "shimmer 4s linear infinite",
+                  marginBottom: 4,
+                  lineHeight: 1.2,
                 }}
               >
-                НАРГИЛИЯ ПРОДАЖИ
+                НАРГИЛИЯ
               </h1>
-              <p style={{ color: "#8b8fa3", fontSize: "0.9rem", letterSpacing: 2 }}>
-                СИСТЕМА МОТИВАЦИИ
-              </p>
+              <div style={{
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginTop: 8,
+              }}>
+                <div style={{ width: 32, height: 1, background: "linear-gradient(90deg, transparent, rgba(196,113,245,0.4))" }}/>
+                <p style={{ color: "#6b7094", fontSize: "0.7rem", letterSpacing: 4, textTransform: "uppercase", fontWeight: 600, margin: 0 }}>
+                  система мотивации
+                </p>
+                <div style={{ width: 32, height: 1, background: "linear-gradient(90deg, rgba(196,113,245,0.4), transparent)" }}/>
+              </div>
             </div>
 
             {/* Admin Login Button */}
