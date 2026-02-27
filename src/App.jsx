@@ -112,6 +112,11 @@ function imageHash(dataUrl) {
   return "img_" + Math.abs(hash).toString(36);
 }
 
+// Sanitize user input to prevent XSS
+function sanitize(str) {
+  return str.replace(/[<>"'&]/g, c => ({ '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#x27;', '&': '&amp;' }[c]));
+}
+
 // Brute force protection
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOCKOUT_DURATION = 300000; // 5 minutes
@@ -340,7 +345,7 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
   const sel = selectedEmpId ? enriched.find((e) => e.id === selectedEmpId) : null;
 
   const deleteEmployee = (id) => { setEmployees((p) => p.filter((e) => e.id !== id)); setConfirmDelete(null); if (selectedEmpId === id) setSelectedEmpId(null); };
-  const renameEmployee = (id) => { if (!editName.trim()) return; setEmployees((p) => p.map((e) => (e.id === id ? { ...e, name: editName.trim() } : e))); setShowEditModal(null); setEditName(""); };
+  const renameEmployee = (id) => { if (!editName.trim()) return; setEmployees((p) => p.map((e) => (e.id === id ? { ...e, name: sanitize(editName.trim()) } : e))); setShowEditModal(null); setEditName(""); };
   const resetEmployee = (id) => { setEmployees((p) => p.map((e) => (e.id === id ? { ...e, sales: [], reviews: [] } : e))); setConfirmDelete(null); };
   const deleteSale = (empId, saleId) => { setEmployees((p) => p.map((e) => (e.id === empId ? { ...e, sales: e.sales.filter((s) => s.saleId !== saleId) } : e))); };
   const deleteReview = (empId, reviewId) => { setEmployees((p) => p.map((e) => (e.id === empId ? { ...e, reviews: (e.reviews || []).filter((r) => r.reviewId !== reviewId) } : e))); };
@@ -349,7 +354,7 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
     const h = parseFloat(shiftHours);
     if (!h || h <= 0 || h > 24) return;
     const bonus = calcShiftBonus(h);
-    const shift = { shiftId: Date.now().toString(), hours: h, bonus, date: shiftDate, rate: getShiftBonusRate(h) };
+    const shift = { shiftId: Date.now().toString() + Math.random().toString(36).slice(2, 6), hours: h, bonus, date: shiftDate, rate: getShiftBonusRate(h) };
     setEmployees((p) => p.map((e) => (e.id === empId ? { ...e, shifts: [...(e.shifts || []), shift] } : e)));
     setShowShiftModal(null); setShiftHours(""); setShiftDate(new Date().toISOString().slice(0, 10));
   };
@@ -365,7 +370,7 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
     const reward = parseInt(planReward);
     if (!target || target <= 0) return;
     const plan = {
-      id: Date.now().toString(),
+      id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
       category: planCategory,
       target,
       period: planPeriod,
@@ -389,7 +394,7 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
     if (!target || target <= 0) return;
     const tpl = QUEST_TEMPLATES.find(t => t.id === questTemplate);
     const quest = {
-      id: Date.now().toString(),
+      id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
       templateId: questTemplate,
       text: tpl.text.replace("{n}", target),
       category: tpl.category,
@@ -1082,6 +1087,7 @@ export default function HookahSalesApp() {
   const [usedReceiptHashes, setUsedReceiptHashes] = useState([]);
   const [receiptDuplicateError, setReceiptDuplicateError] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [adminSessionToken, setAdminSessionToken] = useState(null);
   const [adminPin, setAdminPin] = useState("");
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [adminPinError, setAdminPinError] = useState(false);
@@ -1097,10 +1103,10 @@ export default function HookahSalesApp() {
   const [comboTimer, setComboTimer] = useState(0);
   // Security
   const [adminPinHash, setAdminPinHash] = useState(simpleHash(DEFAULT_ADMIN_PIN));
-  const [adminAttempts, setAdminAttempts] = useState(0);
-  const [adminLockUntil, setAdminLockUntil] = useState(0);
-  const [empAttempts, setEmpAttempts] = useState(0);
-  const [empLockUntil, setEmpLockUntil] = useState(0);
+  const [adminAttempts, setAdminAttempts] = useState(() => parseInt(localStorage.getItem("n_adminAttempts") || "0"));
+  const [adminLockUntil, setAdminLockUntil] = useState(() => parseInt(localStorage.getItem("n_adminLock") || "0"));
+  const [empAttempts, setEmpAttempts] = useState(() => parseInt(localStorage.getItem("n_empAttempts") || "0"));
+  const [empLockUntil, setEmpLockUntil] = useState(() => parseInt(localStorage.getItem("n_empLock") || "0"));
   const [showChangePinModal, setShowChangePinModal] = useState(false);
   const [newPinValue, setNewPinValue] = useState("");
   const [confirmPinValue, setConfirmPinValue] = useState("");
@@ -1110,7 +1116,21 @@ export default function HookahSalesApp() {
     const unsub = onSnapshot(DATA_DOC, (snap) => {
       if (snap.exists()) {
         const data = snap.data();
-        const merged = mergeWithLocalPhotos(data.employees || []);
+        let emps = data.employees || [];
+        // Auto-migrate plaintext passwords to hashes
+        let needsMigration = false;
+        emps = emps.map(e => {
+          if (e.password && !e.passwordHash) {
+            needsMigration = true;
+            return { ...e, passwordHash: simpleHash(e.password), password: undefined };
+          }
+          if (e.password && e.passwordHash) {
+            needsMigration = true;
+            return { ...e, password: undefined };
+          }
+          return e;
+        });
+        const merged = mergeWithLocalPhotos(emps);
         setEmployees(merged);
         if (data.salesPlans) setSalesPlans(data.salesPlans);
         if (data.dailyQuests) setDailyQuests(data.dailyQuests);
@@ -1119,6 +1139,10 @@ export default function HookahSalesApp() {
         const localCur = localStorage.getItem("nargilya-current-emp");
         if (localCur && !currentEmployee) setCurrentEmployee(localCur);
         _dataLoaded = true;
+        // Save migrated data immediately
+        if (needsMigration) {
+          saveToCloud({ employees: emps, salesPlans: data.salesPlans || [], dailyQuests: data.dailyQuests || [], adminPinHash: data.adminPinHash || simpleHash(DEFAULT_ADMIN_PIN) });
+        }
       }
       setLoading(false);
     }, (err) => {
@@ -1170,8 +1194,8 @@ export default function HookahSalesApp() {
   const addEmployee = () => {
     if (!newName.trim() || !newPassword.trim()) return;
     const emp = {
-      id: Date.now().toString(),
-      name: newName.trim(),
+      id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
+      name: sanitize(newName.trim()),
       passwordHash: simpleHash(newPassword.trim()),
       sales: [],
       reviews: [],
@@ -1196,7 +1220,7 @@ export default function HookahSalesApp() {
       baseBonus: baseBonus,
       multiplier: mult,
       timestamp: new Date().toISOString(),
-      saleId: Date.now().toString(),
+      saleId: Date.now().toString() + Math.random().toString(36).slice(2, 6),
       receiptPhoto: photo || null,
       receiptHash: photo ? usedReceiptHashes[usedReceiptHashes.length - 1] || null : null,
     };
@@ -1413,8 +1437,8 @@ export default function HookahSalesApp() {
   const addReview = () => {
     if (!reviewPhoto) return;
     const review = {
-      reviewId: Date.now().toString(),
-      guestName: reviewGuestName.trim() || "Гость",
+      reviewId: Date.now().toString() + Math.random().toString(36).slice(2, 6),
+      guestName: sanitize(reviewGuestName.trim()) || "Гость",
       photo: reviewPhoto,
       timestamp: new Date().toISOString(),
       bonus: REVIEW_BONUS,
@@ -1536,15 +1560,22 @@ export default function HookahSalesApp() {
       return;
     }
     if (simpleHash(adminPin) === adminPinHash) {
+      const token = "as_" + Date.now().toString(36) + Math.random().toString(36).slice(2);
+      setAdminSessionToken(token);
       setIsAdmin(true); setShowAdminLogin(false); setAdminPin(""); setAdminPinError(false);
       setAdminAttempts(0);
+      localStorage.setItem("n_adminAttempts", "0");
     } else {
       const attempts = adminAttempts + 1;
       setAdminAttempts(attempts);
+      localStorage.setItem("n_adminAttempts", String(attempts));
       setAdminPinError(true);
       if (attempts >= MAX_LOGIN_ATTEMPTS) {
-        setAdminLockUntil(now + LOCKOUT_DURATION);
+        const lockTime = now + LOCKOUT_DURATION;
+        setAdminLockUntil(lockTime);
+        localStorage.setItem("n_adminLock", String(lockTime));
         setAdminAttempts(0);
+        localStorage.setItem("n_adminAttempts", "0");
       }
     }
   };
@@ -1567,8 +1598,9 @@ export default function HookahSalesApp() {
       setLoginPassword("");
       setLoginError(false);
       setEmpAttempts(0);
+      localStorage.setItem("n_empAttempts", "0");
       setView("main");
-      // Migrate plaintext password to hash
+      // Migrate plaintext password to hash and remove plaintext
       if (emp.password && !emp.passwordHash) {
         setEmployees(prev => prev.map(e =>
           e.id === emp.id ? { ...e, passwordHash: simpleHash(emp.password), password: undefined } : e
@@ -1577,10 +1609,14 @@ export default function HookahSalesApp() {
     } else {
       const attempts = empAttempts + 1;
       setEmpAttempts(attempts);
+      localStorage.setItem("n_empAttempts", String(attempts));
       setLoginError(true);
       if (attempts >= MAX_LOGIN_ATTEMPTS) {
-        setEmpLockUntil(now + LOCKOUT_DURATION);
+        const lockTime = now + LOCKOUT_DURATION;
+        setEmpLockUntil(lockTime);
+        localStorage.setItem("n_empLock", String(lockTime));
         setEmpAttempts(0);
+        localStorage.setItem("n_empAttempts", "0");
       }
     }
   };
@@ -1607,8 +1643,8 @@ export default function HookahSalesApp() {
   }
 
   /* ═══ ADMIN MODE ═══ */
-  if (isAdmin) {
-    return <AdminPanel employees={employees} setEmployees={setEmployees} onExit={() => setIsAdmin(false)} salesPlans={salesPlans} setSalesPlans={setSalesPlans} dailyQuests={dailyQuests} setDailyQuests={setDailyQuests} adminPinHash={adminPinHash} setAdminPinHash={setAdminPinHash} />;
+  if (isAdmin && adminSessionToken) {
+    return <AdminPanel employees={employees} setEmployees={setEmployees} onExit={() => { setIsAdmin(false); setAdminSessionToken(null); }} salesPlans={salesPlans} setSalesPlans={setSalesPlans} dailyQuests={dailyQuests} setDailyQuests={setDailyQuests} adminPinHash={adminPinHash} setAdminPinHash={setAdminPinHash} />;
   }
 
   return (
