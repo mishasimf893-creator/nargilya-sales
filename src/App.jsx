@@ -1878,6 +1878,11 @@ export default function HookahSalesApp() {
                 НАЧАТЬ
               </button>
             </div>
+
+            {/* Copyright */}
+            <div style={{ textAlign: "center", padding: "32px 0 16px", color: "#2e3254", fontSize: "0.65rem", letterSpacing: 1 }}>
+              © 2025 Наргилия. Все права защищены.
+            </div>
           </div>
         ) : (
           <>
@@ -3170,6 +3175,12 @@ export default function HookahSalesApp() {
               </div>
             )}
           </>
+        )}
+        {/* Copyright footer */}
+        {currentEmployee && (
+          <div style={{ textAlign: "center", padding: "20px 0 100px", color: "#2e3254", fontSize: "0.6rem", letterSpacing: 1 }}>
+            © 2025 Наргилия
+          </div>
         )}
       </div>
     </>
