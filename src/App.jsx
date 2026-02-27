@@ -17,9 +17,16 @@ const db = getFirestore(firebaseApp);
 // Firestore helpers — single document for all data
 const DATA_DOC = doc(db, "app", "main");
 let _saving = false;
+let _dataLoaded = false;
 
 async function saveToCloud(data) {
   if (_saving) return;
+  // CRITICAL: Never overwrite cloud data with empty employees
+  // This prevents data loss when Firebase is unreachable and state resets
+  if (!data.employees || data.employees.length === 0) {
+    console.warn("Blocked save: empty employees array — protecting cloud data");
+    return;
+  }
   _saving = true;
   try {
     // Strip base64 photos before saving (too large for Firestore)
@@ -33,6 +40,7 @@ async function saveToCloud(data) {
         sales: (e.sales || []).map(s => ({ ...s, receiptPhoto: s.receiptPhoto ? "local" : null })),
         reviews: (e.reviews || []).map(r => ({ ...r, photo: r.photo ? "local" : null })),
       })),
+      lastSavedAt: new Date().toISOString(),
     };
     await setDoc(DATA_DOC, clean);
   } catch (err) {
@@ -1110,6 +1118,7 @@ export default function HookahSalesApp() {
         // Restore currentEmployee from localStorage
         const localCur = localStorage.getItem("nargilya-current-emp");
         if (localCur && !currentEmployee) setCurrentEmployee(localCur);
+        _dataLoaded = true;
       }
       setLoading(false);
     }, (err) => {
@@ -1126,7 +1135,7 @@ export default function HookahSalesApp() {
 
   // Save to cloud when employees or salesPlans change
   useEffect(() => {
-    if (loading) return;
+    if (loading || !_dataLoaded) return;
     saveToCloud({ employees, salesPlans, dailyQuests, adminPinHash });
     // Also save full data with photos locally
     saveLocalPhotos({ employees, salesPlans, dailyQuests });
