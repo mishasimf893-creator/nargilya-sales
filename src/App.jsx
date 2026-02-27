@@ -1189,7 +1189,7 @@ export default function HookahSalesApp() {
       timestamp: new Date().toISOString(),
       saleId: Date.now().toString(),
       receiptPhoto: photo || null,
-      receiptHash: photo ? imageHash(photo) : null,
+      receiptHash: photo ? usedReceiptHashes[usedReceiptHashes.length - 1] || null : null,
     };
 
     const prevBonus = totalBonus;
@@ -1342,21 +1342,51 @@ export default function HookahSalesApp() {
     const file = e.target.files[0];
     if (!file) return;
     setReceiptDuplicateError(false);
+
+    // Block gallery: check if file was recently created (within 60 seconds = live camera shot)
+    const now = Date.now();
+    const fileAge = now - file.lastModified;
+    if (fileAge > 60000) {
+      // File is older than 60 seconds — likely from gallery
+      setReceiptDuplicateError("gallery");
+      setReceiptPhoto(null);
+      // Reset input
+      e.target.value = "";
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = (ev) => {
       const dataUrl = ev.target.result;
-      const hash = imageHash(dataUrl);
-      // Check against all existing receipt hashes
-      const allHashes = employees.flatMap(emp =>
-        (emp.sales || []).filter(s => s.receiptHash).map(s => s.receiptHash)
-      );
-      if (allHashes.includes(hash) || usedReceiptHashes.includes(hash)) {
-        setReceiptDuplicateError(true);
-        setReceiptPhoto(null);
-        return;
-      }
-      setReceiptPhoto(dataUrl);
-      setUsedReceiptHashes(prev => [...prev, hash]);
+      // Create canvas fingerprint for robust duplicate detection
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 32;
+        canvas.height = 32;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, 32, 32);
+        const pixels = ctx.getImageData(0, 0, 32, 32).data;
+        let hash = 0;
+        for (let i = 0; i < pixels.length; i += 4) {
+          hash = ((hash << 5) - hash) + pixels[i] + pixels[i+1] + pixels[i+2];
+          hash = hash & hash;
+        }
+        const fingerprint = "fp_" + Math.abs(hash).toString(36);
+
+        // Check against all existing receipt fingerprints
+        const allHashes = employees.flatMap(emp =>
+          (emp.sales || []).filter(s => s.receiptHash).map(s => s.receiptHash)
+        );
+        if (allHashes.includes(fingerprint) || usedReceiptHashes.includes(fingerprint)) {
+          setReceiptDuplicateError("duplicate");
+          setReceiptPhoto(null);
+          return;
+        }
+        setReceiptPhoto(dataUrl);
+        setUsedReceiptHashes(prev => [...prev, fingerprint]);
+      };
+      img.src = dataUrl;
     };
     reader.readAsDataURL(file);
   };
@@ -2598,12 +2628,12 @@ export default function HookahSalesApp() {
                           />
                         ) : (
                           <>
-                            <div style={{ fontSize: "2.2rem", marginBottom: 6, opacity: 0.5 }}>📷</div>
+                            <div style={{ fontSize: "2.2rem", marginBottom: 6, opacity: 0.5 }}>📸</div>
                             <div style={{ color: "#8b8fa3", fontSize: "0.85rem", fontWeight: 600 }}>
-                              Загрузить фото чека
+                              Сфотографировать чек
                             </div>
                             <div style={{ color: "#4a4e6e", fontSize: "0.7rem", marginTop: 4 }}>
-                              Нажмите для загрузки
+                              Только камера · из галереи нельзя
                             </div>
                           </>
                         )}
@@ -2622,7 +2652,10 @@ export default function HookahSalesApp() {
                           background: "rgba(255,80,80,0.1)", border: "1px solid rgba(255,80,80,0.3)",
                           color: "#ff5050", fontSize: "0.8rem", fontWeight: 600, textAlign: "center",
                         }}>
-                          ⚠️ Этот чек уже был загружен ранее! Сделайте новое фото.
+                          {receiptDuplicateError === "gallery"
+                            ? "📵 Нельзя загружать фото из галереи! Сделайте новое фото камерой."
+                            : "⚠️ Этот чек уже был загружен ранее! Сделайте новое фото."
+                          }
                         </div>
                       )}
 
