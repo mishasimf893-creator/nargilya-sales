@@ -27,6 +27,7 @@ async function saveToCloud(data) {
       ...data,
       salesPlans: data.salesPlans || [],
       dailyQuests: data.dailyQuests || [],
+      adminPinHash: data.adminPinHash || simpleHash(DEFAULT_ADMIN_PIN),
       employees: (data.employees || []).map(e => ({
         ...e,
         sales: (e.sales || []).map(s => ({ ...s, receiptPhoto: s.receiptPhoto ? "local" : null })),
@@ -76,7 +77,24 @@ const CATEGORIES = {
 };
 
 const REVIEW_BONUS = 200;
-const ADMIN_PIN = "1234";
+
+// Admin PIN stored in Firestore (not hardcoded). Default only used on first setup.
+const DEFAULT_ADMIN_PIN = "1234";
+
+// Simple hash for passwords (not crypto-grade but much better than plaintext)
+function simpleHash(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32bit integer
+  }
+  return "h_" + Math.abs(hash).toString(36);
+}
+
+// Brute force protection
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOCKOUT_DURATION = 300000; // 5 minutes
 
 // Бонус за рабочее время (₽ за час)
 const SHIFT_BONUS_RATES = [
@@ -243,7 +261,7 @@ function Confetti({ active }) {
 /* ════════════════════════════════════════════ */
 /* ─── ADMIN PANEL ─── */
 /* ════════════════════════════════════════════ */
-function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans, dailyQuests, setDailyQuests }) {
+function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans, dailyQuests, setDailyQuests, adminPinHash, setAdminPinHash }) {
   const [adminView, setAdminView] = useState("dashboard");
   const [selectedEmpId, setSelectedEmpId] = useState(null);
   const [viewingPhoto, setViewingPhoto] = useState(null);
@@ -265,6 +283,9 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
   const [questTemplate, setQuestTemplate] = useState("qt5");
   const [questTarget, setQuestTarget] = useState("");
   const [questBonusReward, setQuestBonusReward] = useState("100");
+  const [showChangePinModal, setShowChangePinModal] = useState(false);
+  const [newPinValue, setNewPinValue] = useState("");
+  const [confirmPinValue, setConfirmPinValue] = useState("");
 
   const periodLabels = { all: "Всё время", today: "Сегодня", week: "Неделя", month: "Месяц" };
 
@@ -301,7 +322,7 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
   const resetEmployee = (id) => { setEmployees((p) => p.map((e) => (e.id === id ? { ...e, sales: [], reviews: [] } : e))); setConfirmDelete(null); };
   const deleteSale = (empId, saleId) => { setEmployees((p) => p.map((e) => (e.id === empId ? { ...e, sales: e.sales.filter((s) => s.saleId !== saleId) } : e))); };
   const deleteReview = (empId, reviewId) => { setEmployees((p) => p.map((e) => (e.id === empId ? { ...e, reviews: (e.reviews || []).filter((r) => r.reviewId !== reviewId) } : e))); };
-  const changePassword = (id) => { setEmployees((p) => p.map((e) => (e.id === id ? { ...e, password: newEmpPassword.trim() || undefined } : e))); setShowPasswordModal(null); setNewEmpPassword(""); };
+  const changePassword = (id) => { if (!newEmpPassword.trim()) return; setEmployees((p) => p.map((e) => (e.id === id ? { ...e, passwordHash: simpleHash(newEmpPassword.trim()), password: undefined } : e))); setShowPasswordModal(null); setNewEmpPassword(""); };
   const addShift = (empId) => {
     const h = parseFloat(shiftHours);
     if (!h || h <= 0 || h > 24) return;
@@ -499,6 +520,7 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
         <button onClick={onExit} style={{ background: "rgba(255,255,255,0.09)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 10, padding: "8px 12px", color: "#8b8fa3", cursor: "pointer", fontSize: "0.8rem", fontFamily: "'DM Sans', sans-serif" }}>← Выйти</button>
         <div style={{ fontFamily: "'Outfit', serif", fontSize: "1.1rem", fontWeight: 900, color: "#c471f5" }}>👑 Руководитель</div>
+        <button onClick={() => setShowChangePinModal(true)} style={{ background: "rgba(255,255,255,0.09)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 10, padding: "8px 12px", color: "#8b8fa3", cursor: "pointer", fontSize: "0.8rem", fontFamily: "'DM Sans', sans-serif" }}>🔐 PIN</button>
       </div>
 
       {/* Nav */}
@@ -941,6 +963,36 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
           </div>
         </div>
       )}
+
+      {/* Change Admin PIN Modal */}
+      {showChangePinModal && (
+        <div onClick={() => { setShowChangePinModal(false); setNewPinValue(""); setConfirmPinValue(""); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 9000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: "rgba(20,18,40,0.95)", backdropFilter: "blur(24px)", border: "1px solid rgba(196,113,245,0.3)", borderRadius: 24, padding: 28, width: "100%", maxWidth: 340 }}>
+            <div style={{ fontSize: "0.75rem", color: "#8b8fa3", textTransform: "uppercase", letterSpacing: 2, marginBottom: 16 }}>🔐 Изменить PIN-код</div>
+            <input value={newPinValue} onChange={(e) => setNewPinValue(e.target.value)} type="password" placeholder="Новый PIN..." maxLength={10}
+              style={{ width: "100%", padding: "14px 16px", marginBottom: 10, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(196,113,245,0.2)", borderRadius: 12, color: "#eef0ff", fontSize: "1.2rem", fontFamily: "'DM Sans', sans-serif", outline: "none", textAlign: "center", letterSpacing: 6 }} />
+            <input value={confirmPinValue} onChange={(e) => setConfirmPinValue(e.target.value)} type="password" placeholder="Повторите PIN..." maxLength={10}
+              style={{ width: "100%", padding: "14px 16px", marginBottom: 10, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(196,113,245,0.2)", borderRadius: 12, color: "#eef0ff", fontSize: "1.2rem", fontFamily: "'DM Sans', sans-serif", outline: "none", textAlign: "center", letterSpacing: 6 }} />
+            {newPinValue && confirmPinValue && newPinValue !== confirmPinValue && (
+              <div style={{ color: "#ff5050", fontSize: "0.8rem", textAlign: "center", marginBottom: 8 }}>PIN-коды не совпадают</div>
+            )}
+            {newPinValue.length > 0 && newPinValue.length < 4 && (
+              <div style={{ color: "#f97316", fontSize: "0.8rem", textAlign: "center", marginBottom: 8 }}>Минимум 4 символа</div>
+            )}
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => { setShowChangePinModal(false); setNewPinValue(""); setConfirmPinValue(""); }} style={{ flex: 1, padding: 14, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12, color: "#8b8fa3", cursor: "pointer", fontWeight: 700, fontFamily: "'DM Sans', sans-serif" }}>Отмена</button>
+              <button onClick={() => {
+                if (newPinValue.length >= 4 && newPinValue === confirmPinValue) {
+                  setAdminPinHash(simpleHash(newPinValue));
+                  setShowChangePinModal(false);
+                  setNewPinValue("");
+                  setConfirmPinValue("");
+                }
+              }} style={{ flex: 1, padding: 14, background: (newPinValue.length >= 4 && newPinValue === confirmPinValue) ? "linear-gradient(135deg, #c471f5, #a855f7)" : "rgba(255,255,255,0.06)", border: "none", borderRadius: 12, color: (newPinValue.length >= 4 && newPinValue === confirmPinValue) ? "#0d0b1a" : "#4a4e6e", cursor: (newPinValue.length >= 4 && newPinValue === confirmPinValue) ? "pointer" : "default", fontWeight: 800, fontFamily: "'DM Sans', sans-serif" }}>Сохранить</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -975,6 +1027,15 @@ export default function HookahSalesApp() {
   const [streakCount, setStreakCount] = useState(0);
   const [lastSaleTime, setLastSaleTime] = useState(null);
   const [comboTimer, setComboTimer] = useState(0);
+  // Security
+  const [adminPinHash, setAdminPinHash] = useState(simpleHash(DEFAULT_ADMIN_PIN));
+  const [adminAttempts, setAdminAttempts] = useState(0);
+  const [adminLockUntil, setAdminLockUntil] = useState(0);
+  const [empAttempts, setEmpAttempts] = useState(0);
+  const [empLockUntil, setEmpLockUntil] = useState(0);
+  const [showChangePinModal, setShowChangePinModal] = useState(false);
+  const [newPinValue, setNewPinValue] = useState("");
+  const [confirmPinValue, setConfirmPinValue] = useState("");
 
   // Firebase real-time listener
   useEffect(() => {
@@ -985,6 +1046,7 @@ export default function HookahSalesApp() {
         setEmployees(merged);
         if (data.salesPlans) setSalesPlans(data.salesPlans);
         if (data.dailyQuests) setDailyQuests(data.dailyQuests);
+        if (data.adminPinHash) setAdminPinHash(data.adminPinHash);
         // Restore currentEmployee from localStorage
         const localCur = localStorage.getItem("nargilya-current-emp");
         if (localCur && !currentEmployee) setCurrentEmployee(localCur);
@@ -1005,10 +1067,10 @@ export default function HookahSalesApp() {
   // Save to cloud when employees or salesPlans change
   useEffect(() => {
     if (loading) return;
-    saveToCloud({ employees, salesPlans, dailyQuests });
+    saveToCloud({ employees, salesPlans, dailyQuests, adminPinHash });
     // Also save full data with photos locally
     saveLocalPhotos({ employees, salesPlans, dailyQuests });
-  }, [employees, salesPlans, dailyQuests]);
+  }, [employees, salesPlans, dailyQuests, adminPinHash]);
 
   // Save currentEmployee to localStorage (device-specific)
   useEffect(() => {
@@ -1041,7 +1103,7 @@ export default function HookahSalesApp() {
     const emp = {
       id: Date.now().toString(),
       name: newName.trim(),
-      password: newPassword.trim(),
+      passwordHash: simpleHash(newPassword.trim()),
       sales: [],
       reviews: [],
       createdAt: new Date().toISOString(),
@@ -1278,25 +1340,58 @@ export default function HookahSalesApp() {
   );
 
   const tryAdminLogin = () => {
-    if (adminPin === ADMIN_PIN) {
-      setIsAdmin(true); setShowAdminLogin(false); setAdminPin(""); setAdminPinError(false);
-    } else {
+    const now = Date.now();
+    if (adminLockUntil > now) {
       setAdminPinError(true);
+      return;
+    }
+    if (simpleHash(adminPin) === adminPinHash) {
+      setIsAdmin(true); setShowAdminLogin(false); setAdminPin(""); setAdminPinError(false);
+      setAdminAttempts(0);
+    } else {
+      const attempts = adminAttempts + 1;
+      setAdminAttempts(attempts);
+      setAdminPinError(true);
+      if (attempts >= MAX_LOGIN_ATTEMPTS) {
+        setAdminLockUntil(now + LOCKOUT_DURATION);
+        setAdminAttempts(0);
+      }
     }
   };
 
   const tryEmployeeLogin = () => {
+    const now = Date.now();
+    if (empLockUntil > now) {
+      setLoginError(true);
+      return;
+    }
     const emp = employees.find((e) => e.id === loginEmpId);
     if (!emp) return;
     // If employee has no password (old accounts), let them in
-    if (!emp.password || loginPassword === emp.password) {
+    const passwordMatch = !emp.passwordHash
+      ? (!emp.password || loginPassword === emp.password)
+      : (simpleHash(loginPassword) === emp.passwordHash);
+    if (passwordMatch) {
       setCurrentEmployee(emp.id);
       setLoginEmpId(null);
       setLoginPassword("");
       setLoginError(false);
+      setEmpAttempts(0);
       setView("main");
+      // Migrate plaintext password to hash
+      if (emp.password && !emp.passwordHash) {
+        setEmployees(prev => prev.map(e =>
+          e.id === emp.id ? { ...e, passwordHash: simpleHash(emp.password), password: undefined } : e
+        ));
+      }
     } else {
+      const attempts = empAttempts + 1;
+      setEmpAttempts(attempts);
       setLoginError(true);
+      if (attempts >= MAX_LOGIN_ATTEMPTS) {
+        setEmpLockUntil(now + LOCKOUT_DURATION);
+        setEmpAttempts(0);
+      }
     }
   };
 
@@ -1315,7 +1410,7 @@ export default function HookahSalesApp() {
 
   /* ═══ ADMIN MODE ═══ */
   if (isAdmin) {
-    return <AdminPanel employees={employees} setEmployees={setEmployees} onExit={() => setIsAdmin(false)} salesPlans={salesPlans} setSalesPlans={setSalesPlans} dailyQuests={dailyQuests} setDailyQuests={setDailyQuests} />;
+    return <AdminPanel employees={employees} setEmployees={setEmployees} onExit={() => setIsAdmin(false)} salesPlans={salesPlans} setSalesPlans={setSalesPlans} dailyQuests={dailyQuests} setDailyQuests={setDailyQuests} adminPinHash={adminPinHash} setAdminPinHash={setAdminPinHash} />;
   }
 
   return (
@@ -1571,9 +1666,9 @@ export default function HookahSalesApp() {
                       outline: "none", marginBottom: 8, textAlign: "center", letterSpacing: 8,
                     }}
                   />
-                  {adminPinError && <div style={{ color: "#ff5050", fontSize: "0.8rem", textAlign: "center", marginBottom: 8 }}>Неверный PIN-код</div>}
+                  {adminPinError && adminLockUntil > Date.now() && <div style={{ color: "#ff5050", fontSize: "0.8rem", textAlign: "center", marginBottom: 8 }}>🔒 Слишком много попыток. Подождите 5 минут.</div>}
+                  {adminPinError && adminLockUntil <= Date.now() && <div style={{ color: "#ff5050", fontSize: "0.8rem", textAlign: "center", marginBottom: 8 }}>Неверный PIN-код ({MAX_LOGIN_ATTEMPTS - adminAttempts} попыток осталось)</div>}
                   <button onClick={tryAdminLogin} style={{ width: "100%", padding: "14px", marginTop: 6, background: adminPin ? "linear-gradient(135deg, #c471f5, #a855f7)" : "rgba(255,255,255,0.09)", border: "none", borderRadius: 12, color: adminPin ? "#0d0b1a" : "#4a4e6e", fontWeight: 800, cursor: adminPin ? "pointer" : "default", fontFamily: "'DM Sans', sans-serif", fontSize: "0.9rem" }}>Войти</button>
-                  <div style={{ color: "#2e3254", fontSize: "0.7rem", textAlign: "center", marginTop: 12 }}>PIN по умолчанию: 1234</div>
                 </div>
               </div>
             )}
@@ -1601,7 +1696,8 @@ export default function HookahSalesApp() {
                       outline: "none", marginBottom: 8, textAlign: "center", letterSpacing: 4,
                     }}
                   />
-                  {loginError && <div style={{ color: "#ff5050", fontSize: "0.8rem", textAlign: "center", marginBottom: 8 }}>Неверный пароль</div>}
+                  {loginError && empLockUntil > Date.now() && <div style={{ color: "#ff5050", fontSize: "0.8rem", textAlign: "center", marginBottom: 8 }}>🔒 Слишком много попыток. Подождите 5 минут.</div>}
+                  {loginError && empLockUntil <= Date.now() && <div style={{ color: "#ff5050", fontSize: "0.8rem", textAlign: "center", marginBottom: 8 }}>Неверный пароль ({MAX_LOGIN_ATTEMPTS - empAttempts} попыток)</div>}
                   <button
                     onClick={tryEmployeeLogin}
                     style={{
