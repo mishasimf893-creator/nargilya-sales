@@ -122,11 +122,11 @@ function formatHours(h) {
 }
 
 const RANKS = [
-  { min: 0, title: "Новичок", icon: "🌱", color: "#64d4aa" },
-  { min: 100840, title: "Продавец", icon: "⭐", color: "#e879f9" },
-  { min: 102100, title: "Мастер", icon: "🔥", color: "#f97316" },
-  { min: 104200, title: "Легенда", icon: "💎", color: "#38bdf8" },
-  { min: 108400, title: "Босс кальянной", icon: "👑", color: "#c471f5" },
+  { min: 0, title: "Салага", icon: "🫧", color: "#64d4aa" },
+  { min: 100840, title: "Торгаш года", icon: "✨", color: "#e879f9" },
+  { min: 102100, title: "Хастлер", icon: "🔥", color: "#f97316" },
+  { min: 104200, title: "Мейн", icon: "💎", color: "#38bdf8" },
+  { min: 108400, title: "Легенда", icon: "👑", color: "#c471f5" },
 ];
 
 // ═══ GAMIFICATION SYSTEM ═══
@@ -1618,7 +1618,7 @@ export default function HookahSalesApp() {
         {!currentEmployee ? (
           <div style={{ padding: "40px 24px", animation: "slideUp 0.5s ease" }}>
             <div style={{ textAlign: "center", marginBottom: 48 }}>
-              {/* SVG Logo — Smoke N */}
+              {/* SVG Logo */}
               <div style={{ display: "inline-block", marginBottom: 16, position: "relative" }}>
                 <svg width="80" height="80" viewBox="0 0 100 100" fill="none" style={{ filter: "drop-shadow(0 0 24px rgba(196,113,245,0.35))" }}>
                   <defs>
@@ -1627,23 +1627,12 @@ export default function HookahSalesApp() {
                       <stop offset="50%" stopColor="#f0abfc"/>
                       <stop offset="100%" stopColor="#38bdf8"/>
                     </linearGradient>
-                    <linearGradient id="smokeGrad" x1="0%" y1="100%" x2="100%" y2="0%">
-                      <stop offset="0%" stopColor="#c471f5" stopOpacity="0.6"/>
-                      <stop offset="100%" stopColor="#38bdf8" stopOpacity="0.1"/>
-                    </linearGradient>
                   </defs>
-                  {/* Smoke wisps */}
-                  <path d="M50 8 C45 18, 30 15, 35 28 C38 36, 28 38, 32 48" stroke="url(#smokeGrad)" strokeWidth="2.5" fill="none" strokeLinecap="round" opacity="0.7">
-                    <animate attributeName="d" dur="4s" repeatCount="indefinite" values="M50 8 C45 18, 30 15, 35 28 C38 36, 28 38, 32 48;M50 8 C55 16, 32 20, 38 30 C42 38, 25 42, 30 48;M50 8 C45 18, 30 15, 35 28 C38 36, 28 38, 32 48"/>
-                  </path>
-                  <path d="M56 12 C60 20, 68 22, 62 34 C58 42, 66 44, 60 50" stroke="url(#smokeGrad)" strokeWidth="2" fill="none" strokeLinecap="round" opacity="0.5">
-                    <animate attributeName="d" dur="5s" repeatCount="indefinite" values="M56 12 C60 20, 68 22, 62 34 C58 42, 66 44, 60 50;M56 12 C52 22, 72 18, 65 32 C60 40, 70 40, 63 50;M56 12 C60 20, 68 22, 62 34 C58 42, 66 44, 60 50"/>
-                  </path>
                   {/* Main shape — rounded square */}
-                  <rect x="20" y="40" width="60" height="52" rx="16" fill="url(#logoGrad)" opacity="0.15"/>
-                  <rect x="20" y="40" width="60" height="52" rx="16" stroke="url(#logoGrad)" strokeWidth="2" fill="none"/>
+                  <rect x="15" y="15" width="70" height="70" rx="20" fill="url(#logoGrad)" opacity="0.12"/>
+                  <rect x="15" y="15" width="70" height="70" rx="20" stroke="url(#logoGrad)" strokeWidth="2" fill="none"/>
                   {/* Letter Н */}
-                  <text x="50" y="77" textAnchor="middle" fontFamily="'Outfit', sans-serif" fontSize="36" fontWeight="900" fill="url(#logoGrad)">Н</text>
+                  <text x="50" y="62" textAnchor="middle" fontFamily="'Outfit', sans-serif" fontSize="40" fontWeight="900" fill="url(#logoGrad)">Н</text>
                 </svg>
               </div>
               <h1
