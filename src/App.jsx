@@ -1,60 +1,57 @@
 import { useState, useEffect, useCallback } from "react";
 import { initializeApp } from "firebase/app";
 import { getFirestore, doc, onSnapshot, setDoc } from "firebase/firestore";
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
 
-// Firebase config
-const firebaseConfig = {
-  apiKey: "AIzaSyDHL_7bDDh7PHoKMHYOp5yx2LlcPsM3HOw",
-  authDomain: "nargilya-sales.firebaseapp.com",
-  projectId: "nargilya-sales",
-  storageBucket: "nargilya-sales.firebasestorage.app",
-  messagingSenderId: "27892862981",
-  appId: "1:27892862981:web:931f25844577a794d40c6c"
-};
-const firebaseApp = initializeApp(firebaseConfig);
-const db = getFirestore(firebaseApp);
+// ═══ CONSTANTS & UTILITIES ═══
+// ═══════════════════════════════════════════════
+// CONSTANTS & UTILITY FUNCTIONS
+// ═══════════════════════════════════════════════
 
-// Firestore helpers — single document for all data
-const DATA_DOC = doc(db, "app", "main");
-let _saving = false;
-let _dataLoaded = false;
-
-async function saveToCloud(data) {
-  if (_saving) return;
-  // CRITICAL: Never overwrite cloud data with empty employees
-  // This prevents data loss when Firebase is unreachable and state resets
-  if (!data.employees || data.employees.length === 0) {
-    console.warn("Blocked save: empty employees array — protecting cloud data");
-    return;
-  }
-  _saving = true;
-  try {
-    // Strip base64 photos before saving (too large for Firestore)
-    const clean = {
-      ...data,
-      salesPlans: data.salesPlans || [],
-      dailyQuests: data.dailyQuests || [],
-      menuCategories: data.menuCategories || DEFAULT_MENU,
-      bonusPercent: data.bonusPercent ?? DEFAULT_BONUS_PERCENT,
-      adminPinHash: data.adminPinHash || simpleHash(DEFAULT_ADMIN_PIN),
-      employees: (data.employees || []).map(e => ({
-        ...e,
-        sales: (e.sales || []).map(s => ({ ...s, receiptPhoto: s.receiptPhoto ? "local" : null })),
-        reviews: (e.reviews || []).map(r => ({ ...r, photo: r.photo ? "local" : null })),
-      })),
-      lastSavedAt: new Date().toISOString(),
-    };
-    await setDoc(DATA_DOC, clean);
-  } catch (err) {
-    console.error("Firebase save error:", err);
-  }
-  _saving = false;
-}
-
-// Default bonus percent (configurable from admin)
+// ── Bonus & Payment ──
 const DEFAULT_BONUS_PERCENT = 3;
+const REVIEW_BONUS = 200;
+const DEFAULT_ADMIN_PIN = "1234";
 
-// Default menu — iiko data + hookah/cocktails
+// Brute force protection
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOCKOUT_DURATION = 300000; // 5 minutes
+
+// Shift bonus rates (₽ per hour)
+const SHIFT_BONUS_RATES = [
+  { minHours: 0, rate: 100, label: "Стандарт" },
+  { minHours: 6, rate: 130, label: "Полная смена" },
+  { minHours: 10, rate: 170, label: "Двойная смена" },
+];
+
+// LocalStorage key
+const STORAGE_KEY = "hookah-sales-data";
+
+// ── Ranks ──
+const RANKS = [
+  { min: 0, title: "Салага", icon: "🫧", color: "#64d4aa" },
+  { min: 100840, title: "Торгаш года", icon: "✨", color: "#e879f9" },
+  { min: 102100, title: "Хастлер", icon: "🔥", color: "#f97316" },
+  { min: 104200, title: "Мейн", icon: "💎", color: "#38bdf8" },
+  { min: 108400, title: "Легенда", icon: "👑", color: "#c471f5" },
+];
+
+// ── Achievements ──
+const ACHIEVEMENTS = [
+  { id: "first_sale", title: "Первая кровь", desc: "Первая продажа за смену", icon: "⚔️", check: (sales) => sales.length >= 1 },
+  { id: "triple", title: "Тройной удар", desc: "3 продажи за 10 минут", icon: "⚡", check: (sales) => {
+    if (sales.length < 3) return false;
+    const last3 = sales.slice(-3);
+    return new Date(last3[2].timestamp) - new Date(last3[0].timestamp) < 600000;
+  }},
+  { id: "five_streak", title: "Серия x5", desc: "5 продаж за смену", icon: "🔥", check: (sales) => sales.length >= 5 },
+  { id: "ten_streak", title: "Не остановить!", desc: "10 продаж за смену", icon: "💥", check: (sales) => sales.length >= 10 },
+  { id: "revenue_5k", title: "Золотой час", desc: "5000₽ выручки за смену", icon: "💰", check: (sales) => sales.reduce((s, x) => s + x.price, 0) >= 5000 },
+  { id: "revenue_10k", title: "Легенда дня", desc: "10000₽ выручки за смену", icon: "👑", check: (sales) => sales.reduce((s, x) => s + x.price, 0) >= 10000 },
+  { id: "revenue_20k", title: "Машина продаж", desc: "20000₽ выручки за смену", icon: "🏆", check: (sales) => sales.reduce((s, x) => s + x.price, 0) >= 20000 },
+];
+
+// ── Default Menu (iiko data) ──
 const DEFAULT_MENU = {
   hookah: {
     name: "🌬️ Кальяны",
@@ -236,18 +233,17 @@ const DEFAULT_MENU = {
   },
 };
 
-const REVIEW_BONUS = 200;
+// ═══════════════════════════════════════════════
+// UTILITY FUNCTIONS
+// ═══════════════════════════════════════════════
 
-// Admin PIN stored in Firestore (not hardcoded). Default only used on first setup.
-const DEFAULT_ADMIN_PIN = "1234";
-
-// Simple hash for passwords (not crypto-grade but much better than plaintext)
+// Simple hash for passwords
 function simpleHash(str) {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
     const char = str.charCodeAt(i);
     hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32bit integer
+    hash = hash & hash;
   }
   return "h_" + Math.abs(hash).toString(36);
 }
@@ -255,7 +251,6 @@ function simpleHash(str) {
 // Simple image hash for duplicate receipt detection
 function imageHash(dataUrl) {
   let hash = 0;
-  // Sample every 100th char for speed (base64 images are large)
   for (let i = 0; i < dataUrl.length; i += 100) {
     const char = dataUrl.charCodeAt(i);
     hash = ((hash << 5) - hash) + char;
@@ -269,17 +264,7 @@ function sanitize(str) {
   return str.replace(/[<>"'&]/g, c => ({ '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#x27;', '&': '&amp;' }[c]));
 }
 
-// Brute force protection
-const MAX_LOGIN_ATTEMPTS = 5;
-const LOCKOUT_DURATION = 300000; // 5 minutes
-
-// Бонус за рабочее время (₽ за час)
-const SHIFT_BONUS_RATES = [
-  { minHours: 0, rate: 100, label: "Стандарт" },
-  { minHours: 6, rate: 130, label: "Полная смена" },
-  { minHours: 10, rate: 170, label: "Двойная смена" },
-];
-
+// Shift bonus calculations
 function getShiftBonusRate(hours) {
   let rate = SHIFT_BONUS_RATES[0];
   for (const r of SHIFT_BONUS_RATES) {
@@ -298,42 +283,7 @@ function formatHours(h) {
   return mins > 0 ? `${hrs}ч ${mins}м` : `${hrs}ч`;
 }
 
-const RANKS = [
-  { min: 0, title: "Салага", icon: "🫧", color: "#64d4aa" },
-  { min: 100840, title: "Торгаш года", icon: "✨", color: "#e879f9" },
-  { min: 102100, title: "Хастлер", icon: "🔥", color: "#f97316" },
-  { min: 104200, title: "Мейн", icon: "💎", color: "#38bdf8" },
-  { min: 108400, title: "Легенда", icon: "👑", color: "#c471f5" },
-];
-
-// ═══ GAMIFICATION SYSTEM ═══
-// Quest templates — generated dynamically from menu + fixed templates
-function getQuestTemplates(menu) {
-  const templates = [];
-  Object.entries(menu).forEach(([key, cat]) => {
-    templates.push({ id: "qt_" + key, text: `Продай {n} из "${cat.name}"`, category: key, icon: cat.emoji || "📦", color: "#c471f5" });
-  });
-  templates.push({ id: "qt_reviews", text: "Собери {n} отзывов", category: "reviews", icon: "⭐", color: "#facc15" });
-  templates.push({ id: "qt_any", text: "Сделай {n} продаж (любых)", category: "any", icon: "🔥", color: "#22d3ee" });
-  templates.push({ id: "qt_revenue", text: "Заработай {n}₽ выручки", category: "revenue", icon: "💰", color: "#64d4aa" });
-  return templates;
-}
-
-// Achievement definitions
-const ACHIEVEMENTS = [
-  { id: "first_sale", title: "Первая кровь", desc: "Первая продажа за смену", icon: "⚔️", check: (sales) => sales.length >= 1 },
-  { id: "triple", title: "Тройной удар", desc: "3 продажи за 10 минут", icon: "⚡", check: (sales) => {
-    if (sales.length < 3) return false;
-    const last3 = sales.slice(-3);
-    return new Date(last3[2].timestamp) - new Date(last3[0].timestamp) < 600000;
-  }},
-  { id: "five_streak", title: "Серия x5", desc: "5 продаж за смену", icon: "🔥", check: (sales) => sales.length >= 5 },
-  { id: "ten_streak", title: "Не остановить!", desc: "10 продаж за смену", icon: "💥", check: (sales) => sales.length >= 10 },
-  { id: "revenue_5k", title: "Золотой час", desc: "5000₽ выручки за смену", icon: "💰", check: (sales) => sales.reduce((s, x) => s + x.price, 0) >= 5000 },
-  { id: "revenue_10k", title: "Легенда дня", desc: "10000₽ выручки за смену", icon: "👑", check: (sales) => sales.reduce((s, x) => s + x.price, 0) >= 10000 },
-  { id: "revenue_20k", title: "Машина продаж", desc: "20000₽ выручки за смену", icon: "🏆", check: (sales) => sales.reduce((s, x) => s + x.price, 0) >= 20000 },
-];
-
+// Rank helpers
 function getRank(bonus) {
   let rank = RANKS[0];
   for (const r of RANKS) {
@@ -349,13 +299,24 @@ function getNextRank(bonus) {
   return null;
 }
 
+// Format money
 function formatMoney(n) {
   return n.toLocaleString("ru-RU") + " ₽";
 }
 
-const STORAGE_KEY = "hookah-sales-data";
+// Quest templates — generated dynamically from menu
+function getQuestTemplates(menu) {
+  const templates = [];
+  Object.entries(menu).forEach(([key, cat]) => {
+    templates.push({ id: "qt_" + key, text: `Продай {n} из "${cat.name}"`, category: key, icon: cat.emoji || "📦", color: "#c471f5" });
+  });
+  templates.push({ id: "qt_reviews", text: "Собери {n} отзывов", category: "reviews", icon: "⭐", color: "#facc15" });
+  templates.push({ id: "qt_any", text: "Сделай {n} продаж (любых)", category: "any", icon: "🔥", color: "#22d3ee" });
+  templates.push({ id: "qt_revenue", text: "Заработай {n}₽ выручки", category: "revenue", icon: "💰", color: "#64d4aa" });
+  return templates;
+}
 
-// localStorage only used for caching photos locally
+// ── LocalStorage helpers (for caching photos locally) ──
 function loadLocalPhotos() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -397,42 +358,191 @@ function mergeWithLocalPhotos(cloudEmployees) {
   });
 }
 
-// Confetti component
-function Confetti({ active }) {
-  if (!active) return null;
-  const particles = Array.from({ length: 30 }, (_, i) => ({
-    id: i,
-    left: Math.random() * 100,
-    delay: Math.random() * 0.5,
-    duration: 1 + Math.random() * 1.5,
-    color: ["#c471f5", "#f97316", "#38bdf8", "#e879f9", "#ff6b6b"][i % 5],
-    size: 4 + Math.random() * 6,
-  }));
+// Sound effect: sale "ding"
+function playSaleSound() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator(); const g = ctx.createGain();
+    osc.connect(g); g.connect(ctx.destination);
+    osc.type = "sine"; osc.frequency.setValueAtTime(880, ctx.currentTime);
+    g.gain.setValueAtTime(0.15, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
+    osc.start(); osc.stop(ctx.currentTime + 0.15);
+  } catch(e) {}
+}
 
+// Sound effect: achievement fanfare
+function playAchievementSound() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator(); const g = ctx.createGain();
+    osc.connect(g); g.connect(ctx.destination);
+    osc.type = "sine"; osc.frequency.setValueAtTime(523, ctx.currentTime);
+    osc.frequency.setValueAtTime(659, ctx.currentTime + 0.1);
+    osc.frequency.setValueAtTime(784, ctx.currentTime + 0.2);
+    g.gain.setValueAtTime(0.3, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+    osc.start(); osc.stop(ctx.currentTime + 0.5);
+  } catch(e) {}
+}
+
+// ═══ FIREBASE ═══
+
+// Firebase config
+const firebaseConfig = {
+  apiKey: "AIzaSyDHL_7bDDh7PHoKMHYOp5yx2LlcPsM3HOw",
+  authDomain: "nargilya-sales.firebaseapp.com",
+  projectId: "nargilya-sales",
+  storageBucket: "nargilya-sales.firebasestorage.app",
+  messagingSenderId: "27892862981",
+  appId: "1:27892862981:web:931f25844577a794d40c6c"
+};
+
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getFirestore(firebaseApp);
+const auth = getAuth(firebaseApp);
+
+// Admin email — this user gets admin panel access
+const ADMIN_EMAIL = "79780187666@mail.ru";
+
+// Firestore document reference
+const DATA_DOC = doc(db, "app", "main");
+
+// Save guard flags
+let _saving = false;
+let _dataLoaded = false;
+function setDataLoaded(val) { _dataLoaded = val; }
+function isDataLoaded() { return _dataLoaded; }
+async function saveToCloud(data) {
+  if (_saving) return;
+  // CRITICAL: Never overwrite cloud data with empty employees
+  if (!data.employees || data.employees.length === 0) {
+    console.warn("Blocked save: empty employees array — protecting cloud data");
+    return;
+  }
+  _saving = true;
+  try {
+    const clean = {
+      ...data,
+      salesPlans: data.salesPlans || [],
+      dailyQuests: data.dailyQuests || [],
+      menuCategories: data.menuCategories || DEFAULT_MENU,
+      bonusPercent: data.bonusPercent ?? DEFAULT_BONUS_PERCENT,
+      adminPinHash: data.adminPinHash || simpleHash(DEFAULT_ADMIN_PIN),
+      employees: (data.employees || []).map(e => ({
+        ...e,
+        sales: (e.sales || []).map(s => ({ ...s, receiptPhoto: s.receiptPhoto ? "local" : null })),
+        reviews: (e.reviews || []).map(r => ({ ...r, photo: r.photo ? "local" : null })),
+      })),
+      lastSavedAt: new Date().toISOString(),
+    };
+    await setDoc(DATA_DOC, clean);
+  } catch (err) {
+    console.error("Firebase save error:", err);
+  }
+  _saving = false;
+}
+
+// ═══ LOGIN SCREENS ═══
+
+// ═══ Logo SVG (reusable) ═══
+function NargiliyaLogo({ gradientId = "lgLogo", size = 64, style = {} }) {
   return (
-    <div style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 9999 }}>
-      {particles.map((p) => (
-        <div
-          key={p.id}
-          style={{
-            position: "absolute",
-            left: `${p.left}%`,
-            top: "-10px",
-            width: p.size,
-            height: p.size,
-            borderRadius: Math.random() > 0.5 ? "50%" : "2px",
-            backgroundColor: p.color,
-            animation: `confettiFall ${p.duration}s ease-in ${p.delay}s forwards`,
-          }}
-        />
-      ))}
+    <svg width={size} height={size} viewBox="0 0 100 100" fill="none" style={style}>
+      <defs>
+        <linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#c471f5" />
+          <stop offset="50%" stopColor="#f0abfc" />
+          <stop offset="100%" stopColor="#38bdf8" />
+        </linearGradient>
+      </defs>
+      <rect x="20" y="40" width="60" height="52" rx="16" stroke={`url(#${gradientId})`} strokeWidth="2" fill="rgba(196,113,245,0.1)" />
+      <text x="50" y="77" textAnchor="middle" fontFamily="'Outfit', sans-serif" fontSize="36" fontWeight="900" fill={`url(#${gradientId})`}>Н</text>
+    </svg>
+  );
+}
+
+// ═══ Loading Screen ═══
+function LoadingScreen() {
+  return (
+    <div style={{ minHeight: "100vh", background: "#0d0b1a", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif", position: "relative", overflow: "hidden" }}>
+      <div style={{ position: "absolute", top: "30%", left: "50%", transform: "translate(-50%, -50%)", width: 300, height: 300, background: "radial-gradient(circle, rgba(196,113,245,0.08) 0%, transparent 70%)", borderRadius: "50%", pointerEvents: "none" }} />
+      <NargiliyaLogo gradientId="lgLoad" style={{ marginBottom: 16, animation: "gentleFloat 2s ease-in-out infinite", filter: "drop-shadow(0 0 24px rgba(196,113,245,0.35))" }} />
+      <div style={{ fontFamily: "'Outfit', sans-serif", color: "#c471f5", fontSize: "1.2rem", fontWeight: 800, letterSpacing: 6, marginBottom: 8 }}>НАРГИЛИЯ</div>
+      <div style={{ color: "#6b7094", fontSize: "0.75rem", marginTop: 4, letterSpacing: 2 }}>подключение...</div>
+      <style>{`@keyframes gentleFloat { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)} }`}</style>
     </div>
   );
 }
 
-/* ════════════════════════════════════════════ */
-/* ─── ADMIN PANEL ─── */
-/* ════════════════════════════════════════════ */
+// ═══ Login Screen ═══
+function LoginScreen() {
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+
+  const handleLogin = async () => {
+    setLoginError("");
+    try {
+      await signInWithEmailAndPassword(auth, loginEmail.trim(), loginPassword);
+      setLoginEmail("");
+      setLoginPassword("");
+    } catch (err) {
+      if (err.code === "auth/user-not-found" || err.code === "auth/wrong-password" || err.code === "auth/invalid-credential") {
+        setLoginError("Неверный email или пароль");
+      } else if (err.code === "auth/too-many-requests") {
+        setLoginError("Слишком много попыток. Подождите 5 минут.");
+      } else {
+        setLoginError("Ошибка входа: " + err.message);
+      }
+    }
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#0d0b1a", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif", padding: 20 }}>
+      <NargiliyaLogo gradientId="lgLogin" style={{ marginBottom: 16, filter: "drop-shadow(0 0 24px rgba(196,113,245,0.35))" }} />
+      <div style={{ fontFamily: "'Outfit', sans-serif", color: "#c471f5", fontSize: "1.2rem", fontWeight: 800, letterSpacing: 6, marginBottom: 24 }}>НАРГИЛИЯ</div>
+
+      <div style={{ width: "100%", maxWidth: 340 }}>
+        <input
+          value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && handleLogin()}
+          type="email" placeholder="Email" autoComplete="email"
+          style={{ width: "100%", padding: "14px 16px", marginBottom: 10, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(196,113,245,0.2)", borderRadius: 12, color: "#eef0ff", fontSize: "0.95rem", fontFamily: "'DM Sans', sans-serif", outline: "none", boxSizing: "border-box" }}
+        />
+        <input
+          value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && handleLogin()}
+          type="password" placeholder="Пароль" autoComplete="current-password"
+          style={{ width: "100%", padding: "14px 16px", marginBottom: 10, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(196,113,245,0.2)", borderRadius: 12, color: "#eef0ff", fontSize: "0.95rem", fontFamily: "'DM Sans', sans-serif", outline: "none", boxSizing: "border-box" }}
+        />
+        {loginError && (
+          <div style={{ color: "#ff5050", fontSize: "0.8rem", textAlign: "center", marginBottom: 10, padding: "8px 12px", background: "rgba(255,80,80,0.08)", borderRadius: 10 }}>{loginError}</div>
+        )}
+        <button onClick={handleLogin} style={{ width: "100%", padding: 16, background: (loginEmail && loginPassword) ? "linear-gradient(135deg, #c471f5, #a855f7)" : "rgba(255,255,255,0.06)", border: "none", borderRadius: 14, color: (loginEmail && loginPassword) ? "#0d0b1a" : "#4a4e6e", fontWeight: 800, cursor: (loginEmail && loginPassword) ? "pointer" : "default", fontFamily: "'DM Sans', sans-serif", fontSize: "1rem" }}>
+          Войти
+        </button>
+      </div>
+      <div style={{ color: "#4a4e6e", fontSize: "0.65rem", marginTop: 24 }}>© 2025 Наргилия</div>
+    </div>
+  );
+}
+
+// ═══ Unlinked Account Screen ═══
+function UnlinkedAccountScreen({ email, onLogout }) {
+  return (
+    <div style={{ minHeight: "100vh", background: "#0d0b1a", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif", padding: 20, textAlign: "center" }}>
+      <div style={{ fontSize: "3rem", marginBottom: 16 }}>🔗</div>
+      <div style={{ color: "#eef0ff", fontSize: "1rem", fontWeight: 700, marginBottom: 8 }}>Аккаунт не привязан</div>
+      <div style={{ color: "#6b7094", fontSize: "0.85rem", marginBottom: 8 }}>{email}</div>
+      <div style={{ color: "#8b8fa3", fontSize: "0.8rem", maxWidth: 300, lineHeight: 1.5 }}>Попросите администратора привязать ваш email к вашему профилю сотрудника.</div>
+      <button onClick={onLogout} style={{ marginTop: 24, padding: "12px 32px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12, color: "#8b8fa3", cursor: "pointer", fontWeight: 700, fontFamily: "'DM Sans', sans-serif" }}>Выйти</button>
+    </div>
+  );
+}
+
+// ═══ ADMIN PANEL ═══
+
 function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans, dailyQuests, setDailyQuests, adminPinHash, setAdminPinHash, menuCategories, setMenuCategories, bonusPercent, setBonusPercent }) {
   const QUEST_TEMPLATES = getQuestTemplates(menuCategories);
   const [adminView, setAdminView] = useState("dashboard");
@@ -524,7 +634,7 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
       period: planPeriod,
       reward: reward || 0,
       createdAt: new Date().toISOString(),
-      rewardPaid: {}, // track who got paid
+      rewardPaid: {},
     };
     setSalesPlans((prev) => [...prev, plan]);
     setShowPlanModal(false);
@@ -550,10 +660,10 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
       icon: tpl.icon,
       color: tpl.color,
       reward: reward || 0,
-      assignee: questAssignee, // "all" or employee id
+      assignee: questAssignee,
       createdAt: new Date().toISOString(),
       date: new Date().toDateString(),
-      rewardPaid: {}, // track who got paid: { empId: true }
+      rewardPaid: {},
     };
     setDailyQuests((prev) => [...prev, quest]);
     setShowQuestModal(false);
@@ -566,7 +676,6 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
     setDailyQuests((prev) => prev.filter((q) => q.id !== questId));
   };
 
-  // Get quest progress for a specific employee
   const getQuestProgress = (quest, emp) => {
     const now = new Date();
     const todaySales = (emp?.sales || []).filter(s => new Date(s.timestamp).toDateString() === now.toDateString());
@@ -575,13 +684,11 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
     if (quest.category === "reviews") return todayReviews.length;
     if (quest.category === "any") return todaySales.length;
     if (quest.category === "revenue") return todaySales.reduce((s, x) => s + x.price, 0);
-    // Dynamic category check
     const catItems = menuCategories[quest.category]?.items || [];
     const catItemIds = catItems.map(i => i.id);
     return todaySales.filter(s => catItemIds.includes(s.id)).length;
   };
 
-  // Calculate sales count for a plan
   const getPlanProgress = (plan) => {
     const now = new Date();
     const salesInPeriod = employees.flatMap(e => (e.sales || []).filter(s => {
@@ -616,7 +723,7 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
         <div onClick={() => setShowEditModal(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 9000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: "rgba(15,12,30,0.8)", backdropFilter: "blur(24px) saturate(180%)", WebkitBackdropFilter: "blur(24px) saturate(180%)", boxShadow: "0 8px 32px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1)", border: "1px solid rgba(196,113,245,0.2)", borderRadius: 24, padding: 28, width: "100%", maxWidth: 400 }}>
             <div style={{ fontFamily: "'Outfit', serif", fontSize: "1.2rem", fontWeight: 900, color: "#c471f5", marginBottom: 16, textAlign: "center" }}>✏️ Переименовать</div>
-            <input value={editName} onChange={(e) => setEditName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && renameEmployee(showEditModal)} placeholder="Новое имя..." style={{ width: "100%", padding: "12px 16px", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(196,113,245,0.3)", borderRadius: 12, color: "#eef0ff", fontSize: "0.9rem", fontFamily: "'DM Sans', sans-serif", outline: "none", marginBottom: 14 }} />
+            <input value={editName} onChange={(e) => setEditName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && renameEmployee(showEditModal)} placeholder="Новое имя..." style={{ width: "100%", padding: "12px 16px", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(196,113,245,0.3)", borderRadius: 12, color: "#eef0ff", fontSize: "0.9rem", fontFamily: "'DM Sans', sans-serif", outline: "none", marginBottom: 14, boxSizing: "border-box" }} />
             <div style={{ display: "flex", gap: 10 }}>
               <button onClick={() => setShowEditModal(null)} style={{ flex: 1, padding: 14, background: "rgba(255,255,255,0.09)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12, color: "#8b8fa3", cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontWeight: 700 }}>Отмена</button>
               <button onClick={() => renameEmployee(showEditModal)} style={{ flex: 1, padding: 14, background: editName.trim() ? "linear-gradient(135deg, #c471f5, #a855f7)" : "rgba(255,255,255,0.09)", border: "none", borderRadius: 12, color: editName.trim() ? "#0d0b1a" : "#4a4e6e", cursor: "pointer", fontWeight: 800, fontFamily: "'DM Sans', sans-serif" }}>Сохранить</button>
@@ -631,7 +738,7 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
           <div onClick={(e) => e.stopPropagation()} style={{ background: "rgba(15,12,30,0.8)", backdropFilter: "blur(24px) saturate(180%)", WebkitBackdropFilter: "blur(24px) saturate(180%)", boxShadow: "0 8px 32px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1)", border: "1px solid rgba(196,113,245,0.2)", borderRadius: 24, padding: 28, width: "100%", maxWidth: 400 }}>
             <div style={{ fontFamily: "'Outfit', serif", fontSize: "1.2rem", fontWeight: 900, color: "#c471f5", marginBottom: 6, textAlign: "center" }}>🔐 Изменить пароль</div>
             <div style={{ color: "#4a4e6e", fontSize: "0.8rem", textAlign: "center", marginBottom: 16 }}>{employees.find((e) => e.id === showPasswordModal)?.name}</div>
-            <input value={newEmpPassword} onChange={(e) => setNewEmpPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && changePassword(showPasswordModal)} type="password" placeholder="Новый пароль..." style={{ width: "100%", padding: "12px 16px", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(196,113,245,0.3)", borderRadius: 12, color: "#eef0ff", fontSize: "0.9rem", fontFamily: "'DM Sans', sans-serif", outline: "none", marginBottom: 8 }} />
+            <input value={newEmpPassword} onChange={(e) => setNewEmpPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && changePassword(showPasswordModal)} type="password" placeholder="Новый пароль..." style={{ width: "100%", padding: "12px 16px", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(196,113,245,0.3)", borderRadius: 12, color: "#eef0ff", fontSize: "0.9rem", fontFamily: "'DM Sans', sans-serif", outline: "none", marginBottom: 8, boxSizing: "border-box" }} />
             <div style={{ color: "#4a4e6e", fontSize: "0.7rem", marginBottom: 14 }}>Оставьте пустым, чтобы убрать пароль</div>
             <div style={{ display: "flex", gap: 10 }}>
               <button onClick={() => { setShowPasswordModal(null); setNewEmpPassword(""); }} style={{ flex: 1, padding: 14, background: "rgba(255,255,255,0.09)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12, color: "#8b8fa3", cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontWeight: 700 }}>Отмена</button>
@@ -649,11 +756,11 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
             <div style={{ color: "#4a4e6e", fontSize: "0.8rem", textAlign: "center", marginBottom: 20 }}>{employees.find((e) => e.id === showShiftModal)?.name}</div>
             <div style={{ marginBottom: 12 }}>
               <div style={{ color: "#8b8fa3", fontSize: "0.75rem", marginBottom: 6 }}>Дата смены</div>
-              <input type="date" value={shiftDate} onChange={(e) => setShiftDate(e.target.value)} style={{ width: "100%", padding: "12px 16px", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(196,113,245,0.3)", borderRadius: 12, color: "#eef0ff", fontSize: "0.9rem", fontFamily: "'DM Sans', sans-serif", outline: "none", colorScheme: "dark" }} />
+              <input type="date" value={shiftDate} onChange={(e) => setShiftDate(e.target.value)} style={{ width: "100%", padding: "12px 16px", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(196,113,245,0.3)", borderRadius: 12, color: "#eef0ff", fontSize: "0.9rem", fontFamily: "'DM Sans', sans-serif", outline: "none", colorScheme: "dark", boxSizing: "border-box" }} />
             </div>
             <div style={{ marginBottom: 12 }}>
               <div style={{ color: "#8b8fa3", fontSize: "0.75rem", marginBottom: 6 }}>Количество часов</div>
-              <input type="number" step="0.5" min="0.5" max="24" value={shiftHours} onChange={(e) => setShiftHours(e.target.value)} placeholder="Например: 8" style={{ width: "100%", padding: "12px 16px", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(196,113,245,0.3)", borderRadius: 12, color: "#eef0ff", fontSize: "1.1rem", fontFamily: "'DM Sans', sans-serif", outline: "none" }} />
+              <input type="number" step="0.5" min="0.5" max="24" value={shiftHours} onChange={(e) => setShiftHours(e.target.value)} placeholder="Например: 8" style={{ width: "100%", padding: "12px 16px", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(196,113,245,0.3)", borderRadius: 12, color: "#eef0ff", fontSize: "1.1rem", fontFamily: "'DM Sans', sans-serif", outline: "none", boxSizing: "border-box" }} />
             </div>
             {shiftHours > 0 && (
               <div style={{ background: "rgba(196,113,245,0.08)", border: "1px solid rgba(196,113,245,0.3)", borderRadius: 14, padding: 14, marginBottom: 16 }}>
@@ -777,7 +884,16 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
           <div style={{ background: "rgba(196,113,245,0.2)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)", boxShadow: "0 8px 32px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.08)", border: "1px solid rgba(196,113,245,0.3)", borderRadius: 24, padding: 24, marginBottom: 20, textAlign: "center" }}>
             <div style={{ fontSize: "2.5rem", marginBottom: 6 }}>{getRank(sel.totalBonus).icon}</div>
             <div style={{ fontFamily: "'Outfit', serif", fontSize: "1.3rem", fontWeight: 900 }}>{sel.name}</div>
-            <div style={{ fontSize: "0.8rem", color: getRank(sel.totalBonus).color, marginBottom: 12 }}>{getRank(sel.totalBonus).title}</div>
+            <div style={{ fontSize: "0.8rem", color: getRank(sel.totalBonus).color, marginBottom: 8 }}>{getRank(sel.totalBonus).title}</div>
+            {/* Auth email link */}
+            <div style={{ fontSize: "0.7rem", color: sel.authEmail ? "#22d3ee" : "#6b7094", marginBottom: 12 }}>
+              {sel.authEmail ? `✉️ ${sel.authEmail}` : "⚠️ Email не привязан"}
+              <button onClick={() => {
+                const email = prompt("Email аккаунта сотрудника (из Firebase Auth):", sel.authEmail || "");
+                if (email === null) return;
+                setEmployees(prev => prev.map(e => e.id === sel.id ? { ...e, authEmail: email.trim().toLowerCase() } : e));
+              }} style={{ marginLeft: 8, padding: "2px 8px", borderRadius: 6, border: "1px solid rgba(34,211,238,0.3)", background: "rgba(34,211,238,0.08)", color: "#22d3ee", cursor: "pointer", fontSize: "0.65rem", fontFamily: "'DM Sans', sans-serif" }}>{sel.authEmail ? "✏️" : "Привязать"}</button>
+            </div>
             <div style={{ display: "flex", gap: 10 }}>
               {[{ l: "Бонусы", v: formatMoney(sel.fBonus), c: "#c471f5" }, { l: "Выручка", v: formatMoney(sel.fRevenue) }, { l: "Продаж", v: "" + sel.fSaleCount }].map((x, i) => (
                 <div key={i} style={{ flex: 1, background: "rgba(255,255,255,0.1)", borderRadius: 12, padding: 10 }}>
@@ -1084,7 +1200,7 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
                   value={planTarget}
                   onChange={(e) => setPlanTarget(e.target.value)}
                   placeholder="Кол-во: 50"
-                  style={{ width: "100%", padding: "14px 16px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(196,113,245,0.2)", borderRadius: 12, color: "#eef0ff", fontSize: "1rem", fontFamily: "'DM Sans', sans-serif", outline: "none" }}
+                  style={{ width: "100%", padding: "14px 16px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(196,113,245,0.2)", borderRadius: 12, color: "#eef0ff", fontSize: "1rem", fontFamily: "'DM Sans', sans-serif", outline: "none", boxSizing: "border-box" }}
                 />
               </div>
               <div style={{ flex: 1 }}>
@@ -1093,7 +1209,7 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
                   value={planReward}
                   onChange={(e) => setPlanReward(e.target.value)}
                   placeholder="Премия ₽"
-                  style={{ width: "100%", padding: "14px 16px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(34,211,238,0.2)", borderRadius: 12, color: "#eef0ff", fontSize: "1rem", fontFamily: "'DM Sans', sans-serif", outline: "none" }}
+                  style={{ width: "100%", padding: "14px 16px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(34,211,238,0.2)", borderRadius: 12, color: "#eef0ff", fontSize: "1rem", fontFamily: "'DM Sans', sans-serif", outline: "none", boxSizing: "border-box" }}
                 />
               </div>
             </div>
@@ -1165,12 +1281,12 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: "0.8rem", color: "#6b7094", marginBottom: 8 }}>Цель</div>
                 <input type="number" value={questTarget} onChange={(e) => setQuestTarget(e.target.value)} placeholder={QUEST_TEMPLATES.find(t => t.id === questTemplate)?.category === "revenue" ? "5000" : "5"}
-                  style={{ width: "100%", padding: "14px 16px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(196,113,245,0.2)", borderRadius: 12, color: "#eef0ff", fontSize: "1rem", fontFamily: "'DM Sans', sans-serif", outline: "none" }} />
+                  style={{ width: "100%", padding: "14px 16px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(196,113,245,0.2)", borderRadius: 12, color: "#eef0ff", fontSize: "1rem", fontFamily: "'DM Sans', sans-serif", outline: "none", boxSizing: "border-box" }} />
               </div>
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: "0.8rem", color: "#6b7094", marginBottom: 8 }}>Премия ₽</div>
                 <input type="number" value={questBonusReward} onChange={(e) => setQuestBonusReward(e.target.value)} placeholder="100"
-                  style={{ width: "100%", padding: "14px 16px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(196,113,245,0.2)", borderRadius: 12, color: "#eef0ff", fontSize: "1rem", fontFamily: "'DM Sans', sans-serif", outline: "none" }} />
+                  style={{ width: "100%", padding: "14px 16px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(196,113,245,0.2)", borderRadius: 12, color: "#eef0ff", fontSize: "1rem", fontFamily: "'DM Sans', sans-serif", outline: "none", boxSizing: "border-box" }} />
               </div>
             </div>
 
@@ -1266,9 +1382,9 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
           <div onClick={(e) => e.stopPropagation()} style={{ background: "rgba(20,18,40,0.95)", backdropFilter: "blur(24px)", border: "1px solid rgba(196,113,245,0.3)", borderRadius: 24, padding: 28, width: "100%", maxWidth: 340 }}>
             <div style={{ fontSize: "0.75rem", color: "#8b8fa3", textTransform: "uppercase", letterSpacing: 2, marginBottom: 16 }}>🔐 Изменить PIN-код</div>
             <input value={newPinValue} onChange={(e) => setNewPinValue(e.target.value)} type="password" placeholder="Новый PIN..." maxLength={10}
-              style={{ width: "100%", padding: "14px 16px", marginBottom: 10, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(196,113,245,0.2)", borderRadius: 12, color: "#eef0ff", fontSize: "1.2rem", fontFamily: "'DM Sans', sans-serif", outline: "none", textAlign: "center", letterSpacing: 6 }} />
+              style={{ width: "100%", padding: "14px 16px", marginBottom: 10, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(196,113,245,0.2)", borderRadius: 12, color: "#eef0ff", fontSize: "1.2rem", fontFamily: "'DM Sans', sans-serif", outline: "none", textAlign: "center", letterSpacing: 6, boxSizing: "border-box" }} />
             <input value={confirmPinValue} onChange={(e) => setConfirmPinValue(e.target.value)} type="password" placeholder="Повторите PIN..." maxLength={10}
-              style={{ width: "100%", padding: "14px 16px", marginBottom: 10, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(196,113,245,0.2)", borderRadius: 12, color: "#eef0ff", fontSize: "1.2rem", fontFamily: "'DM Sans', sans-serif", outline: "none", textAlign: "center", letterSpacing: 6 }} />
+              style={{ width: "100%", padding: "14px 16px", marginBottom: 10, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(196,113,245,0.2)", borderRadius: 12, color: "#eef0ff", fontSize: "1.2rem", fontFamily: "'DM Sans', sans-serif", outline: "none", textAlign: "center", letterSpacing: 6, boxSizing: "border-box" }} />
             {newPinValue && confirmPinValue && newPinValue !== confirmPinValue && (
               <div style={{ color: "#ff5050", fontSize: "0.8rem", textAlign: "center", marginBottom: 8 }}>PIN-коды не совпадают</div>
             )}
@@ -1293,13 +1409,48 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
   );
 }
 
-export default function HookahSalesApp() {
-  const [employees, setEmployees] = useState([]);
-  const [currentEmployee, setCurrentEmployee] = useState(null);
-  const [loading, setLoading] = useState(true);
+// ═══ EMPLOYEE DASHBOARD ═══
+
+// Confetti component
+function Confetti({ active }) {
+  if (!active) return null;
+  const particles = Array.from({ length: 30 }, (_, i) => ({
+    id: i,
+    left: Math.random() * 100,
+    delay: Math.random() * 0.5,
+    duration: 1 + Math.random() * 1.5,
+    color: ["#c471f5", "#f97316", "#38bdf8", "#e879f9", "#ff6b6b"][i % 5],
+    size: 4 + Math.random() * 6,
+  }));
+
+  return (
+    <div style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 9999 }}>
+      {particles.map((p) => (
+        <div
+          key={p.id}
+          style={{
+            position: "absolute",
+            left: `${p.left}%`,
+            top: "-10px",
+            width: p.size,
+            height: p.size,
+            borderRadius: Math.random() > 0.5 ? "50%" : "2px",
+            backgroundColor: p.color,
+            animation: `confettiFall ${p.duration}s ease-in ${p.delay}s forwards`,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function EmployeeDashboard({
+  employee, employees, currentEmployee, setEmployees,
+  menuCategories, bonusPercent, dailyQuests, setDailyQuests,
+  salesPlans, setSalesPlans, onLogout,
+}) {
   const [view, setView] = useState("main");
   const [selectedCategory, setSelectedCategory] = useState("hookah");
-  const [newName, setNewName] = useState("");
   const [showConfetti, setShowConfetti] = useState(false);
   const [lastSale, setLastSale] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
@@ -1312,94 +1463,7 @@ export default function HookahSalesApp() {
   const [saleQuantity, setSaleQuantity] = useState(1);
   const [usedReceiptHashes, setUsedReceiptHashes] = useState([]);
   const [receiptDuplicateError, setReceiptDuplicateError] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [adminSessionToken, setAdminSessionToken] = useState(null);
-  const [adminPin, setAdminPin] = useState("");
-  const [showAdminLogin, setShowAdminLogin] = useState(false);
-  const [adminPinError, setAdminPinError] = useState(false);
-  const [newPassword, setNewPassword] = useState("");
-  const [loginEmpId, setLoginEmpId] = useState(null);
-  const [loginPassword, setLoginPassword] = useState("");
-  const [loginError, setLoginError] = useState(false);
-  const [salesPlans, setSalesPlans] = useState([]);
-  const [dailyQuests, setDailyQuests] = useState([]);
-  const [menuCategories, setMenuCategories] = useState(DEFAULT_MENU);
-  const [bonusPercent, setBonusPercent] = useState(DEFAULT_BONUS_PERCENT);
   const [achievementPopup, setAchievementPopup] = useState(null);
-  // Security
-  const [adminPinHash, setAdminPinHash] = useState(simpleHash(DEFAULT_ADMIN_PIN));
-  const [adminAttempts, setAdminAttempts] = useState(() => parseInt(localStorage.getItem("n_adminAttempts") || "0"));
-  const [adminLockUntil, setAdminLockUntil] = useState(() => parseInt(localStorage.getItem("n_adminLock") || "0"));
-  const [empAttempts, setEmpAttempts] = useState(() => parseInt(localStorage.getItem("n_empAttempts") || "0"));
-  const [empLockUntil, setEmpLockUntil] = useState(() => parseInt(localStorage.getItem("n_empLock") || "0"));
-  const [showChangePinModal, setShowChangePinModal] = useState(false);
-  const [newPinValue, setNewPinValue] = useState("");
-  const [confirmPinValue, setConfirmPinValue] = useState("");
-
-  // Firebase real-time listener
-  useEffect(() => {
-    const unsub = onSnapshot(DATA_DOC, (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        let emps = data.employees || [];
-        // Auto-migrate plaintext passwords to hashes
-        let needsMigration = false;
-        emps = emps.map(e => {
-          if (e.password && !e.passwordHash) {
-            needsMigration = true;
-            return { ...e, passwordHash: simpleHash(e.password), password: undefined };
-          }
-          if (e.password && e.passwordHash) {
-            needsMigration = true;
-            return { ...e, password: undefined };
-          }
-          return e;
-        });
-        const merged = mergeWithLocalPhotos(emps);
-        setEmployees(merged);
-        if (data.salesPlans) setSalesPlans(data.salesPlans);
-        if (data.dailyQuests) setDailyQuests(data.dailyQuests);
-        if (data.menuCategories) setMenuCategories(data.menuCategories);
-        if (data.bonusPercent !== undefined) setBonusPercent(data.bonusPercent);
-        if (data.adminPinHash) setAdminPinHash(data.adminPinHash);
-        // Restore currentEmployee from localStorage
-        const localCur = localStorage.getItem("nargilya-current-emp");
-        if (localCur && !currentEmployee) setCurrentEmployee(localCur);
-        _dataLoaded = true;
-        // Save migrated data immediately
-        if (needsMigration) {
-          saveToCloud({ employees: emps, salesPlans: data.salesPlans || [], dailyQuests: data.dailyQuests || [], menuCategories: data.menuCategories || DEFAULT_MENU, bonusPercent: data.bonusPercent ?? DEFAULT_BONUS_PERCENT, adminPinHash: data.adminPinHash || simpleHash(DEFAULT_ADMIN_PIN) });
-        }
-      }
-      setLoading(false);
-    }, (err) => {
-      console.error("Firebase listen error:", err);
-      // Fallback to localStorage
-      const local = loadLocalPhotos();
-      if (local?.employees) setEmployees(local.employees);
-      if (local?.salesPlans) setSalesPlans(local.salesPlans);
-      if (local?.dailyQuests) setDailyQuests(local.dailyQuests);
-      setLoading(false);
-    });
-    return () => unsub();
-  }, []);
-
-  // Save to cloud when employees or salesPlans change
-  useEffect(() => {
-    if (loading || !_dataLoaded) return;
-    saveToCloud({ employees, salesPlans, dailyQuests, menuCategories, bonusPercent, adminPinHash });
-    // Also save full data with photos locally
-    saveLocalPhotos({ employees, salesPlans, dailyQuests });
-  }, [employees, salesPlans, dailyQuests, menuCategories, bonusPercent, adminPinHash]);
-
-  // Save currentEmployee to localStorage (device-specific)
-  useEffect(() => {
-    if (currentEmployee) {
-      localStorage.setItem("nargilya-current-emp", currentEmployee);
-    } else {
-      localStorage.removeItem("nargilya-current-emp");
-    }
-  }, [currentEmployee]);
 
   const employee = employees.find((e) => e.id === currentEmployee);
 
@@ -1417,23 +1481,6 @@ export default function HookahSalesApp() {
 
   const rank = getRank(totalBonus);
   const nextRank = getNextRank(totalBonus);
-
-  const addEmployee = () => {
-    if (!newName.trim() || !newPassword.trim()) return;
-    const emp = {
-      id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
-      name: sanitize(newName.trim()),
-      passwordHash: simpleHash(newPassword.trim()),
-      sales: [],
-      reviews: [],
-      createdAt: new Date().toISOString(),
-    };
-    setEmployees((prev) => [...prev, emp]);
-    setCurrentEmployee(emp.id);
-    setNewName("");
-    setNewPassword("");
-    setView("main");
-  };
 
   const addSale = (item, photo) => {
     const mult = employee?.bonusMultiplier || 0;
@@ -1781,100 +1828,7 @@ export default function HookahSalesApp() {
   const todayAchievements = ACHIEVEMENTS.filter(ach =>
     (employee?.earnedAchievements || []).includes(ach.id + "_" + new Date().toDateString())
   );
-
-  const tryAdminLogin = () => {
-    const now = Date.now();
-    if (adminLockUntil > now) {
-      setAdminPinError(true);
-      return;
-    }
-    if (simpleHash(adminPin) === adminPinHash) {
-      const token = "as_" + Date.now().toString(36) + Math.random().toString(36).slice(2);
-      setAdminSessionToken(token);
-      setIsAdmin(true); setShowAdminLogin(false); setAdminPin(""); setAdminPinError(false);
-      setAdminAttempts(0);
-      localStorage.setItem("n_adminAttempts", "0");
-    } else {
-      const attempts = adminAttempts + 1;
-      setAdminAttempts(attempts);
-      localStorage.setItem("n_adminAttempts", String(attempts));
-      setAdminPinError(true);
-      if (attempts >= MAX_LOGIN_ATTEMPTS) {
-        const lockTime = now + LOCKOUT_DURATION;
-        setAdminLockUntil(lockTime);
-        localStorage.setItem("n_adminLock", String(lockTime));
-        setAdminAttempts(0);
-        localStorage.setItem("n_adminAttempts", "0");
-      }
-    }
-  };
-
-  const tryEmployeeLogin = () => {
-    const now = Date.now();
-    if (empLockUntil > now) {
-      setLoginError(true);
-      return;
-    }
-    const emp = employees.find((e) => e.id === loginEmpId);
-    if (!emp) return;
-    // If employee has no password (old accounts), let them in
-    const passwordMatch = !emp.passwordHash
-      ? (!emp.password || loginPassword === emp.password)
-      : (simpleHash(loginPassword) === emp.passwordHash);
-    if (passwordMatch) {
-      setCurrentEmployee(emp.id);
-      setLoginEmpId(null);
-      setLoginPassword("");
-      setLoginError(false);
-      setEmpAttempts(0);
-      localStorage.setItem("n_empAttempts", "0");
-      setView("main");
-      // Migrate plaintext password to hash and remove plaintext
-      if (emp.password && !emp.passwordHash) {
-        setEmployees(prev => prev.map(e =>
-          e.id === emp.id ? { ...e, passwordHash: simpleHash(emp.password), password: undefined } : e
-        ));
-      }
-    } else {
-      const attempts = empAttempts + 1;
-      setEmpAttempts(attempts);
-      localStorage.setItem("n_empAttempts", String(attempts));
-      setLoginError(true);
-      if (attempts >= MAX_LOGIN_ATTEMPTS) {
-        const lockTime = now + LOCKOUT_DURATION;
-        setEmpLockUntil(lockTime);
-        localStorage.setItem("n_empLock", String(lockTime));
-        setEmpAttempts(0);
-        localStorage.setItem("n_empAttempts", "0");
-      }
-    }
-  };
-
-  /* ═══ LOADING ═══ */
-  if (loading) {
-    return (
-      <div style={{ minHeight: "100vh", background: "#0d0b1a", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif", position: "relative", overflow: "hidden" }}>
-        <div style={{ position: "absolute", top: "30%", left: "50%", transform: "translate(-50%, -50%)", width: 300, height: 300, background: "radial-gradient(circle, rgba(196,113,245,0.08) 0%, transparent 70%)", borderRadius: "50%", pointerEvents: "none" }} />
-        <svg width="64" height="64" viewBox="0 0 100 100" fill="none" style={{ marginBottom: 16, animation: "gentleFloat 2s ease-in-out infinite", filter: "drop-shadow(0 0 24px rgba(196,113,245,0.35))" }}>
-          <defs>
-            <linearGradient id="lgLoad" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="#c471f5"/><stop offset="50%" stopColor="#f0abfc"/><stop offset="100%" stopColor="#38bdf8"/>
-            </linearGradient>
-          </defs>
-          <rect x="20" y="40" width="60" height="52" rx="16" stroke="url(#lgLoad)" strokeWidth="2" fill="rgba(196,113,245,0.1)"/>
-          <text x="50" y="77" textAnchor="middle" fontFamily="'Outfit', sans-serif" fontSize="36" fontWeight="900" fill="url(#lgLoad)">Н</text>
-        </svg>
-        <div style={{ fontFamily: "'Outfit', sans-serif", color: "#c471f5", fontSize: "1.2rem", fontWeight: 800, letterSpacing: 6, marginBottom: 8 }}>НАРГИЛИЯ</div>
-        <div style={{ color: "#6b7094", fontSize: "0.75rem", marginTop: 4, letterSpacing: 2 }}>подключение...</div>
-        <style>{`@keyframes gentleFloat { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)} }`}</style>
-      </div>
-    );
-  }
-
-  /* ═══ ADMIN MODE ═══ */
-  if (isAdmin && adminSessionToken) {
-    return <AdminPanel employees={employees} setEmployees={setEmployees} onExit={() => { setIsAdmin(false); setAdminSessionToken(null); }} salesPlans={salesPlans} setSalesPlans={setSalesPlans} dailyQuests={dailyQuests} setDailyQuests={setDailyQuests} adminPinHash={adminPinHash} setAdminPinHash={setAdminPinHash} menuCategories={menuCategories} setMenuCategories={setMenuCategories} bonusPercent={bonusPercent} setBonusPercent={setBonusPercent} />;
-  }
+  const handleLogout = onLogout;
 
   return (
     <>
@@ -2070,266 +2024,7 @@ export default function HookahSalesApp() {
         />
 
         {/* LOGIN / SELECT EMPLOYEE */}
-        {!currentEmployee ? (
-          <div style={{ padding: "40px 24px", animation: "slideUp 0.5s ease" }}>
-            <div style={{ textAlign: "center", marginBottom: 48 }}>
-              {/* SVG Logo */}
-              <div style={{ display: "inline-block", marginBottom: 16, position: "relative" }}>
-                <svg width="80" height="80" viewBox="0 0 100 100" fill="none" style={{ filter: "drop-shadow(0 0 24px rgba(196,113,245,0.35))" }}>
-                  <defs>
-                    <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                      <stop offset="0%" stopColor="#c471f5"/>
-                      <stop offset="50%" stopColor="#f0abfc"/>
-                      <stop offset="100%" stopColor="#38bdf8"/>
-                    </linearGradient>
-                  </defs>
-                  {/* Main shape — rounded square */}
-                  <rect x="15" y="15" width="70" height="70" rx="20" fill="url(#logoGrad)" opacity="0.12"/>
-                  <rect x="15" y="15" width="70" height="70" rx="20" stroke="url(#logoGrad)" strokeWidth="2" fill="none"/>
-                  {/* Letter Н */}
-                  <text x="50" y="62" textAnchor="middle" fontFamily="'Outfit', sans-serif" fontSize="40" fontWeight="900" fill="url(#logoGrad)">Н</text>
-                </svg>
-              </div>
-              <h1
-                style={{
-                  fontFamily: "'Outfit', sans-serif",
-                  fontSize: "1.8rem",
-                  fontWeight: 900,
-                  letterSpacing: 6,
-                  background: "linear-gradient(135deg, #c471f5 0%, #f0abfc 40%, #38bdf8 70%, #c471f5 100%)",
-                  backgroundSize: "200% auto",
-                  WebkitBackgroundClip: "text",
-                  WebkitTextFillColor: "transparent",
-                  animation: "shimmer 4s linear infinite",
-                  marginBottom: 4,
-                  lineHeight: 1.2,
-                }}
-              >
-                НАРГИЛИЯ
-              </h1>
-              <div style={{
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginTop: 8,
-              }}>
-                <div style={{ width: 32, height: 1, background: "linear-gradient(90deg, transparent, rgba(196,113,245,0.4))" }}/>
-                <p style={{ color: "#6b7094", fontSize: "0.7rem", letterSpacing: 4, textTransform: "uppercase", fontWeight: 600, margin: 0 }}>
-                  система мотивации
-                </p>
-                <div style={{ width: 32, height: 1, background: "linear-gradient(90deg, rgba(196,113,245,0.4), transparent)" }}/>
-              </div>
-            </div>
-
-            {/* Admin Login Button */}
-            <button
-              onClick={() => setShowAdminLogin(true)}
-              style={{
-                width: "100%", padding: "14px", marginBottom: 24,
-                background: "linear-gradient(135deg, rgba(196,113,245,0.25), rgba(15,12,30,0.9))",
-                border: "1px solid rgba(196,113,245,0.25)", borderRadius: 16, color: "#e879f9",
-                cursor: "pointer", fontSize: "0.9rem", fontWeight: 700, fontFamily: "'DM Sans', sans-serif",
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-              }}
-            >
-              <span style={{ fontSize: "1.2rem" }}>👑</span> Войти как руководитель
-            </button>
-
-            {/* Admin PIN Modal */}
-            {showAdminLogin && (
-              <div
-                onClick={() => { setShowAdminLogin(false); setAdminPin(""); setAdminPinError(false); }}
-                style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 9000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
-              >
-                <div onClick={(e) => e.stopPropagation()} style={{ background: "rgba(15,12,30,0.8)", backdropFilter: "blur(24px) saturate(180%)", WebkitBackdropFilter: "blur(24px) saturate(180%)", boxShadow: "0 8px 32px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1)", border: "1px solid rgba(196,113,245,0.2)", borderRadius: 24, padding: 28, width: "100%", maxWidth: 360, animation: "slideUp 0.3s ease" }}>
-                  <div style={{ fontFamily: "'Outfit', serif", fontSize: "1.3rem", fontWeight: 900, color: "#c471f5", marginBottom: 6, textAlign: "center" }}>👑 Вход для руководителя</div>
-                  <div style={{ color: "#4a4e6e", fontSize: "0.8rem", textAlign: "center", marginBottom: 20 }}>Введите PIN-код</div>
-                  <input
-                    value={adminPin}
-                    onChange={(e) => { setAdminPin(e.target.value); setAdminPinError(false); }}
-                    onKeyDown={(e) => e.key === "Enter" && tryAdminLogin()}
-                    type="password" placeholder="PIN-код..." maxLength={10}
-                    style={{
-                      width: "100%", padding: "14px 18px", background: "rgba(255,255,255,0.08)",
-                      border: adminPinError ? "1px solid rgba(255,80,80,0.5)" : "1px solid rgba(196,113,245,0.3)",
-                      borderRadius: 12, color: "#eef0ff", fontSize: "1.5rem", fontFamily: "'DM Sans', sans-serif",
-                      outline: "none", marginBottom: 8, textAlign: "center", letterSpacing: 8,
-                    }}
-                  />
-                  {adminPinError && adminLockUntil > Date.now() && <div style={{ color: "#ff5050", fontSize: "0.8rem", textAlign: "center", marginBottom: 8 }}>🔒 Слишком много попыток. Подождите 5 минут.</div>}
-                  {adminPinError && adminLockUntil <= Date.now() && <div style={{ color: "#ff5050", fontSize: "0.8rem", textAlign: "center", marginBottom: 8 }}>Неверный PIN-код ({MAX_LOGIN_ATTEMPTS - adminAttempts} попыток осталось)</div>}
-                  <button onClick={tryAdminLogin} style={{ width: "100%", padding: "14px", marginTop: 6, background: adminPin ? "linear-gradient(135deg, #c471f5, #a855f7)" : "rgba(255,255,255,0.09)", border: "none", borderRadius: 12, color: adminPin ? "#0d0b1a" : "#4a4e6e", fontWeight: 800, cursor: adminPin ? "pointer" : "default", fontFamily: "'DM Sans', sans-serif", fontSize: "0.9rem" }}>Войти</button>
-                </div>
-              </div>
-            )}
-
-            {/* Employee Password Login Modal */}
-            {loginEmpId && (
-              <div
-                onClick={() => { setLoginEmpId(null); setLoginPassword(""); setLoginError(false); }}
-                style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 9000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
-              >
-                <div onClick={(e) => e.stopPropagation()} style={{ background: "rgba(15,12,30,0.8)", backdropFilter: "blur(24px) saturate(180%)", WebkitBackdropFilter: "blur(24px) saturate(180%)", boxShadow: "0 8px 32px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1)", border: "1px solid rgba(196,113,245,0.2)", borderRadius: 24, padding: 28, width: "100%", maxWidth: 360, animation: "slideUp 0.3s ease" }}>
-                  <div style={{ fontFamily: "'Outfit', serif", fontSize: "1.3rem", fontWeight: 900, color: "#c471f5", marginBottom: 6, textAlign: "center" }}>
-                    🔐 {employees.find((e) => e.id === loginEmpId)?.name}
-                  </div>
-                  <div style={{ color: "#4a4e6e", fontSize: "0.8rem", textAlign: "center", marginBottom: 20 }}>Введите пароль</div>
-                  <input
-                    value={loginPassword}
-                    onChange={(e) => { setLoginPassword(e.target.value); setLoginError(false); }}
-                    onKeyDown={(e) => e.key === "Enter" && tryEmployeeLogin()}
-                    type="password" placeholder="Пароль..." autoFocus
-                    style={{
-                      width: "100%", padding: "14px 18px", background: "rgba(255,255,255,0.08)",
-                      border: loginError ? "1px solid rgba(255,80,80,0.5)" : "1px solid rgba(196,113,245,0.3)",
-                      borderRadius: 12, color: "#eef0ff", fontSize: "1.1rem", fontFamily: "'DM Sans', sans-serif",
-                      outline: "none", marginBottom: 8, textAlign: "center", letterSpacing: 4,
-                    }}
-                  />
-                  {loginError && empLockUntil > Date.now() && <div style={{ color: "#ff5050", fontSize: "0.8rem", textAlign: "center", marginBottom: 8 }}>🔒 Слишком много попыток. Подождите 5 минут.</div>}
-                  {loginError && empLockUntil <= Date.now() && <div style={{ color: "#ff5050", fontSize: "0.8rem", textAlign: "center", marginBottom: 8 }}>Неверный пароль ({MAX_LOGIN_ATTEMPTS - empAttempts} попыток)</div>}
-                  <button
-                    onClick={tryEmployeeLogin}
-                    style={{
-                      width: "100%", padding: "14px", marginTop: 6,
-                      background: loginPassword ? "linear-gradient(135deg, #c471f5, #a855f7)" : "rgba(255,255,255,0.09)",
-                      border: "none", borderRadius: 12, color: loginPassword ? "#0d0b1a" : "#4a4e6e",
-                      fontWeight: 800, cursor: loginPassword ? "pointer" : "default",
-                      fontFamily: "'DM Sans', sans-serif", fontSize: "0.9rem",
-                    }}
-                  >Войти</button>
-                </div>
-              </div>
-            )}
-
-            {employees.length > 0 && (
-              <div style={{ marginBottom: 32 }}>
-                <p style={{ color: "#8b8fa3", fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: 2, marginBottom: 16 }}>
-                  Выберите профиль
-                </p>
-                {employees.map((emp) => {
-                  const empBonus = emp.sales.reduce((s, sale) => s + sale.bonus, 0) + (emp.reviews || []).length * REVIEW_BONUS;
-                  const empRank = getRank(empBonus);
-                  return (
-                    <button
-                      key={emp.id}
-                      onClick={() => {
-                        if (!emp.password) {
-                          setCurrentEmployee(emp.id); setView("main");
-                        } else {
-                          setLoginEmpId(emp.id); setLoginPassword(""); setLoginError(false);
-                        }
-                      }}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 14,
-                        width: "100%",
-                        padding: "16px 20px",
-                        marginBottom: 10,
-                        background: "linear-gradient(135deg, rgba(196,113,245,0.25), rgba(56,189,248,0.03))",
-                        backdropFilter: "blur(16px)",
-                        WebkitBackdropFilter: "blur(16px)",
-                        border: "1px solid rgba(196,113,245,0.25)",
-                        borderRadius: 18,
-                        color: "#eef0ff",
-                        cursor: "pointer",
-                        textAlign: "left",
-                        transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-                        fontFamily: "'DM Sans', sans-serif",
-                        boxShadow: "0 2px 12px rgba(0,0,0,0.15)",
-                      }}
-                      onMouseEnter={(e) => { e.currentTarget.style.borderColor = "rgba(196,113,245,0.4)"; e.currentTarget.style.transform = "translateX(4px)"; e.currentTarget.style.boxShadow = "0 4px 24px rgba(196,113,245,0.25)"; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.borderColor = "rgba(196,113,245,0.25)"; e.currentTarget.style.transform = "translateX(0)"; e.currentTarget.style.boxShadow = "0 2px 12px rgba(0,0,0,0.15)"; }}
-                    >
-                      <span style={{ fontSize: "1.6rem" }}>{empRank.icon}</span>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 700, fontSize: "1rem" }}>{emp.name}</div>
-                        <div style={{ fontSize: "0.8rem", color: empRank.color }}>{empRank.title} · {formatMoney(empBonus)}</div>
-                      </div>
-                      {emp.password && <span style={{ fontSize: "0.9rem", opacity: 0.4 }}>🔐</span>}
-                      <span style={{ color: "#4a4e6e", fontSize: "1.2rem" }}>→</span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
-            <div
-              style={{
-                background: "linear-gradient(135deg, rgba(196,113,245,0.2), rgba(56,189,248,0.03))",
-                backdropFilter: "blur(20px)",
-                WebkitBackdropFilter: "blur(20px)",
-                border: "1px solid rgba(196,113,245,0.25)",
-                borderRadius: 24,
-                padding: 24,
-                boxShadow: "0 8px 32px rgba(0,0,0,0.25), 0 0 60px rgba(196,113,245,0.08)",
-              }}
-            >
-              <p style={{ color: "rgba(196,113,245,0.6)", fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: 3, marginBottom: 16, fontWeight: 600 }}>
-                Новый сотрудник
-              </p>
-              <input
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                placeholder="Введите имя..."
-                style={{
-                  width: "100%",
-                  padding: "14px 18px",
-                  background: "rgba(255,255,255,0.08)",
-                  border: "1px solid rgba(196,113,245,0.3)",
-                  borderRadius: 12,
-                  color: "#eef0ff",
-                  fontSize: "1rem",
-                  fontFamily: "'DM Sans', sans-serif",
-                  outline: "none",
-                  marginBottom: 10,
-                }}
-              />
-              <input
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && addEmployee()}
-                type="password"
-                placeholder="Придумайте пароль..."
-                style={{
-                  width: "100%",
-                  padding: "14px 18px",
-                  background: "rgba(255,255,255,0.08)",
-                  border: "1px solid rgba(196,113,245,0.3)",
-                  borderRadius: 12,
-                  color: "#eef0ff",
-                  fontSize: "1rem",
-                  fontFamily: "'DM Sans', sans-serif",
-                  outline: "none",
-                  marginBottom: 14,
-                }}
-              />
-              <button
-                onClick={addEmployee}
-                style={{
-                  width: "100%",
-                  padding: "14px",
-                  background: newName.trim() && newPassword.trim() ? "linear-gradient(135deg, #c471f5, #a855f7)" : "rgba(255,255,255,0.09)",
-                  border: "none",
-                  borderRadius: 12,
-                  color: newName.trim() && newPassword.trim() ? "#0d0b1a" : "#4a4e6e",
-                  fontSize: "1rem",
-                  fontWeight: 800,
-                  cursor: newName.trim() && newPassword.trim() ? "pointer" : "default",
-                  fontFamily: "'DM Sans', sans-serif",
-                  transition: "all 0.2s",
-                  letterSpacing: 1,
-                }}
-              >
-                НАЧАТЬ
-              </button>
-            </div>
-
-            {/* Copyright */}
-            <div style={{ textAlign: "center", padding: "32px 0 16px", color: "#2e3254", fontSize: "0.65rem", letterSpacing: 1 }}>
-              © 2025 Наргилия. Все права защищены.
-            </div>
-          </div>
-        ) : (
-          <>
+        {/* EMPLOYEE VIEW — always shown since auth check above */}
             {/* HEADER */}
             <div
               style={{
@@ -2343,7 +2038,7 @@ export default function HookahSalesApp() {
               {/* Top neon gradient strip */}
               <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "linear-gradient(90deg, #c471f5, #38bdf8, #e879f9, #c471f5)", backgroundSize: "300% 100%", animation: "gradientShift 4s ease infinite" }} />
               <button
-                onClick={() => setCurrentEmployee(null)}
+                onClick={handleLogout}
                 style={{
                   background: "rgba(196,113,245,0.25)",
                   backdropFilter: "blur(12px)",
@@ -3634,15 +3329,154 @@ export default function HookahSalesApp() {
                 )}
               </div>
             )}
-          </>
-        )}
         {/* Copyright footer */}
-        {currentEmployee && (
-          <div style={{ textAlign: "center", padding: "20px 0 100px", color: "#2e3254", fontSize: "0.6rem", letterSpacing: 1 }}>
-            © 2025 Наргилия
-          </div>
-        )}
+        <div style={{ textAlign: "center", padding: "20px 0 100px", color: "#2e3254", fontSize: "0.6rem", letterSpacing: 1 }}>
+          © 2025 Наргилия
+        </div>
       </div>
     </>
+  );
+}
+
+// ═══ MAIN APP ═══
+// ═══════════════════════════════════════════════
+// MAIN APP — Orchestrator
+// ═══════════════════════════════════════════════
+export default function HookahSalesApp() {
+  // ── Shared state (persisted in Firestore) ──
+  const [employees, setEmployees] = useState([]);
+  const [salesPlans, setSalesPlans] = useState([]);
+  const [dailyQuests, setDailyQuests] = useState([]);
+  const [menuCategories, setMenuCategories] = useState(DEFAULT_MENU);
+  const [bonusPercent, setBonusPercent] = useState(DEFAULT_BONUS_PERCENT);
+  const [adminPinHash, setAdminPinHash] = useState(simpleHash(DEFAULT_ADMIN_PIN));
+
+  // ── Auth state ──
+  const [authUser, setAuthUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  // ── App state ──
+  const [currentEmployee, setCurrentEmployee] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  // ── Derived ──
+  const isAdmin = authUser?.email === ADMIN_EMAIL;
+  const employee = employees.find((e) => e.id === currentEmployee);
+
+  // ═══ Firebase Auth listener ═══
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      setAuthUser(user);
+      setAuthLoading(false);
+    });
+    return () => unsub();
+  }, []);
+
+  // ═══ Firebase real-time data listener ═══
+  useEffect(() => {
+    const unsub = onSnapshot(DATA_DOC, (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        let emps = data.employees || [];
+        const merged = mergeWithLocalPhotos(emps);
+        setEmployees(merged);
+        if (data.salesPlans) setSalesPlans(data.salesPlans);
+        if (data.dailyQuests) setDailyQuests(data.dailyQuests);
+        if (data.menuCategories) setMenuCategories(data.menuCategories);
+        if (data.bonusPercent !== undefined) setBonusPercent(data.bonusPercent);
+        if (data.adminPinHash) setAdminPinHash(data.adminPinHash);
+        setDataLoaded(true);
+      }
+      setLoading(false);
+    }, (err) => {
+      console.error("Firebase listen error:", err);
+      // Fallback to localStorage
+      const local = loadLocalPhotos();
+      if (local?.employees) setEmployees(local.employees);
+      if (local?.salesPlans) setSalesPlans(local.salesPlans);
+      if (local?.dailyQuests) setDailyQuests(local.dailyQuests);
+      setLoading(false);
+    });
+    return () => unsub();
+  }, []);
+
+  // ═══ Auto-match employee when auth + data loads ═══
+  useEffect(() => {
+    if (!authUser || employees.length === 0) return;
+    if (isAdmin) return;
+    const emp = employees.find(e => e.authEmail === authUser.email);
+    if (emp) {
+      setCurrentEmployee(emp.id);
+    }
+  }, [authUser, employees, isAdmin]);
+
+  // ═══ Auto-save to cloud when data changes ═══
+  useEffect(() => {
+    if (loading || !_dataLoaded) return;
+    saveToCloud({ employees, salesPlans, dailyQuests, menuCategories, bonusPercent, adminPinHash });
+    saveLocalPhotos({ employees, salesPlans, dailyQuests });
+  }, [employees, salesPlans, dailyQuests, menuCategories, bonusPercent, adminPinHash]);
+
+  // ═══ Logout handler ═══
+  const handleLogout = async () => {
+    await signOut(auth);
+    setCurrentEmployee(null);
+  };
+
+  // ═══════════════════════════════════════════════
+  // ROUTING
+  // ═══════════════════════════════════════════════
+
+  // 1. Loading
+  if (loading || authLoading) {
+    return <LoadingScreen />;
+  }
+
+  // 2. Not logged in
+  if (!authUser) {
+    return <LoginScreen />;
+  }
+
+  // 3. Admin
+  if (isAdmin) {
+    return (
+      <AdminPanel
+        employees={employees}
+        setEmployees={setEmployees}
+        onExit={handleLogout}
+        salesPlans={salesPlans}
+        setSalesPlans={setSalesPlans}
+        dailyQuests={dailyQuests}
+        setDailyQuests={setDailyQuests}
+        adminPinHash={adminPinHash}
+        setAdminPinHash={setAdminPinHash}
+        menuCategories={menuCategories}
+        setMenuCategories={setMenuCategories}
+        bonusPercent={bonusPercent}
+        setBonusPercent={setBonusPercent}
+      />
+    );
+  }
+
+  // 4. Employee not linked
+  if (!employee) {
+    return <UnlinkedAccountScreen email={authUser.email} onLogout={handleLogout} />;
+  }
+
+  // 5. Employee dashboard
+  return (
+    <EmployeeDashboard
+      employee={employee}
+      employees={employees}
+      currentEmployee={currentEmployee}
+      setEmployees={setEmployees}
+      menuCategories={menuCategories}
+      bonusPercent={bonusPercent}
+      dailyQuests={dailyQuests}
+      setDailyQuests={setDailyQuests}
+      salesPlans={salesPlans}
+      setSalesPlans={setSalesPlans}
+      onLogout={handleLogout}
+    />
   );
 }
