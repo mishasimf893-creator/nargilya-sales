@@ -34,6 +34,8 @@ async function saveToCloud(data) {
       ...data,
       salesPlans: data.salesPlans || [],
       dailyQuests: data.dailyQuests || [],
+      menuCategories: data.menuCategories || DEFAULT_MENU,
+      bonusPercent: data.bonusPercent ?? DEFAULT_BONUS_PERCENT,
       adminPinHash: data.adminPinHash || simpleHash(DEFAULT_ADMIN_PIN),
       employees: (data.employees || []).map(e => ({
         ...e,
@@ -49,37 +51,187 @@ async function saveToCloud(data) {
   _saving = false;
 }
 
-const CATEGORIES = {
+// Default bonus percent (configurable from admin)
+const DEFAULT_BONUS_PERCENT = 3;
+
+// Default menu — iiko data + hookah/cocktails
+const DEFAULT_MENU = {
   hookah: {
     name: "🌬️ Кальяны",
     emoji: "🌬️",
     items: [
-      { id: "h1", name: "Классический кальян", price: 1500, bonus: 63 },
-      { id: "h2", name: "Кальян на фрукте", price: 1800, bonus: 76 },
+      { id: "h1", name: "Классический кальян", price: 1500 },
+      { id: "h2", name: "Кальян на фрукте", price: 1800 },
     ],
   },
   cocktails: {
     name: "🍹 Коктейли",
     emoji: "🍹",
     items: [
-      { id: "c1", name: "Мохито", price: 450, bonus: 19 },
-      { id: "c2", name: "Маргарита", price: 500, bonus: 21 },
-      { id: "c3", name: "Пина Колада", price: 550, bonus: 23 },
-      { id: "c4", name: "Лонг Айленд", price: 600, bonus: 28 },
-      { id: "c5", name: "Апероль Шприц", price: 550, bonus: 23 },
-      { id: "c6", name: "Авторский коктейль", price: 700, bonus: 34 },
+      { id: "c1", name: "Мохито", price: 450 },
+      { id: "c2", name: "Маргарита", price: 500 },
+      { id: "c3", name: "Пина Колада", price: 550 },
+      { id: "c4", name: "Лонг Айленд", price: 600 },
+      { id: "c5", name: "Апероль Шприц", price: 550 },
+      { id: "c6", name: "Авторский коктейль", price: 700 },
     ],
   },
-  kitchen: {
-    name: "🍽️ Кухня",
-    emoji: "🍽️",
+  desserts: {
+    name: "🍰 Десерты",
+    emoji: "🍰",
     items: [
-      { id: "k1", name: "Брускетта", price: 350, bonus: 13 },
-      { id: "k2", name: "Цезарь", price: 450, bonus: 17 },
-      { id: "k3", name: "Наггетсы", price: 400, bonus: 15 },
-      { id: "k4", name: "Пицца", price: 600, bonus: 23 },
-      { id: "k5", name: "Паста", price: 550, bonus: 21 },
-      { id: "k6", name: "Десерт", price: 350, bonus: 13 },
+      { id: "d1", name: "Блины с бананом и нутелой", price: 270 },
+      { id: "d2", name: "Брауни", price: 360 },
+      { id: "d3", name: "Крем брюле", price: 350 },
+      { id: "d4", name: "Лимонный тарт", price: 370 },
+      { id: "d5", name: "Наполеон", price: 260 },
+      { id: "d6", name: "Панакота", price: 350 },
+      { id: "d7", name: "Сникерс", price: 290 },
+      { id: "d8", name: "Три шоколада", price: 290 },
+      { id: "d9", name: "Фондан", price: 490 },
+      { id: "d10", name: "Чизкейк печеный", price: 390 },
+    ],
+  },
+  breakfast: {
+    name: "🍳 Завтраки",
+    emoji: "🍳",
+    items: [
+      { id: "br1", name: "Английский завтрак", price: 610 },
+      { id: "br2", name: "Блины жульен", price: 530 },
+      { id: "br3", name: "Блины шоколад-банан", price: 490 },
+      { id: "br4", name: "Боул с гречкой и авокадо", price: 505 },
+      { id: "br5", name: "Завтрак + кальян", price: 1100 },
+      { id: "br6", name: "Овсяная каша", price: 410 },
+      { id: "br7", name: "Рисовая каша", price: 390 },
+      { id: "br8", name: "Сырники", price: 330 },
+      { id: "br9", name: "Сырники с йогуртом и ягодами", price: 480 },
+      { id: "br10", name: "Сытный завтрак", price: 590 },
+      { id: "br11", name: "Тост с креветкой", price: 580 },
+      { id: "br12", name: "Шакшука", price: 460 },
+    ],
+  },
+  appetizers: {
+    name: "🥗 Закуски",
+    emoji: "🥗",
+    items: [
+      { id: "a1", name: "Батат фри", price: 390 },
+      { id: "a2", name: "Брускетта с креветкой", price: 820 },
+      { id: "a3", name: "Брускетта с лососем", price: 870 },
+      { id: "a4", name: "Жареный рис с яйцом", price: 280 },
+      { id: "a5", name: "Картофель по-деревенски", price: 320 },
+      { id: "a6", name: "Картофель фри", price: 280 },
+      { id: "a7", name: "Колбаски вурст с фри", price: 705 },
+      { id: "a8", name: "Костный мозг", price: 620 },
+      { id: "a9", name: "Креветки в панировке 3шт", price: 340 },
+      { id: "a10", name: "Креветки в панировке 9шт", price: 830 },
+      { id: "a11", name: "Кростини с говядиной", price: 980 },
+      { id: "a12", name: "Куриные крылышки", price: 540 },
+      { id: "a13", name: "Мидии по-тайски", price: 560 },
+      { id: "a14", name: "Овощи гриль с Цезарем", price: 640 },
+      { id: "a15", name: "Паштет", price: 570 },
+      { id: "a16", name: "Пивной сет", price: 910 },
+      { id: "a17", name: "Сырная нарезка", price: 830 },
+      { id: "a18", name: "Сырные палочки 3шт", price: 310 },
+      { id: "a19", name: "Тар тар лосось", price: 890 },
+      { id: "a20", name: "Тар тар по нашему", price: 790 },
+      { id: "a21", name: "Фруктовая тарелка", price: 730 },
+      { id: "a22", name: "Хоровац", price: 390 },
+      { id: "a23", name: "Хумус", price: 430 },
+    ],
+  },
+  mains: {
+    name: "🥩 Основные блюда",
+    emoji: "🥩",
+    items: [
+      { id: "m1", name: "Брискет с карамелиз. луком", price: 1390 },
+      { id: "m2", name: "Вареники с вишней", price: 520 },
+      { id: "m3", name: "Вареники с картошкой", price: 520 },
+      { id: "m4", name: "Жареный рис с курицей", price: 560 },
+      { id: "m5", name: "Картофель с лисичками", price: 560 },
+      { id: "m6", name: "Колбаска говяжья", price: 680 },
+      { id: "m7", name: "Колбаска куриная", price: 620 },
+      { id: "m8", name: "Колбаска свино-говяжья", price: 660 },
+      { id: "m9", name: "Колбасный сет", price: 1990 },
+      { id: "m10", name: "Куриное филе в орех. соусе", price: 460 },
+      { id: "m11", name: "Куриное филе со спаржей", price: 640 },
+      { id: "m12", name: "Лосось с авокадо", price: 1790 },
+      { id: "m13", name: "Люкс бутерброд со свининой", price: 630 },
+      { id: "m14", name: "Мидии", price: 790 },
+      { id: "m15", name: "Палтус с вешенками", price: 1390 },
+      { id: "m16", name: "Пельмени", price: 520 },
+      { id: "m17", name: "Пельмени Том Ям", price: 590 },
+      { id: "m18", name: "Рибай с томатами и бататом", price: 1390 },
+      { id: "m19", name: "Свиная корейка с картофелем", price: 860 },
+      { id: "m20", name: "Свиные ребра с картофелем", price: 910 },
+      { id: "m21", name: "Сковородка мясная", price: 860 },
+      { id: "m22", name: "Стейк говяж. вырезки с салатом", price: 1610 },
+      { id: "m23", name: "Стриплойн с салатом бигмак", price: 1260 },
+    ],
+  },
+  pasta: {
+    name: "🍝 Паста",
+    emoji: "🍝",
+    items: [
+      { id: "p1", name: "Паста Болоньезе", price: 500 },
+      { id: "p2", name: "Паста Карбонара", price: 570 },
+      { id: "p3", name: "Паста Мак энд чиз", price: 460 },
+      { id: "p4", name: "Паста с буратой", price: 760 },
+      { id: "p5", name: "Паста с горгонзола", price: 500 },
+      { id: "p6", name: "Паста с курицей и грибами", price: 520 },
+      { id: "p7", name: "Паста с морепродуктами", price: 720 },
+    ],
+  },
+  salads: {
+    name: "🥬 Салаты",
+    emoji: "🥬",
+    items: [
+      { id: "sl1", name: "Салат Биг Мак", price: 440 },
+      { id: "sl2", name: "Салат Греческий", price: 480 },
+      { id: "sl3", name: "Салат с баклажанами", price: 610 },
+      { id: "sl4", name: "Салат с копченой курицей", price: 470 },
+      { id: "sl5", name: "Салат с креветкой и авокадо", price: 790 },
+      { id: "sl6", name: "Салат с морепродуктами", price: 810 },
+      { id: "sl7", name: "Салат с телятиной", price: 890 },
+      { id: "sl8", name: "Цезарь с креветками", price: 810 },
+      { id: "sl9", name: "Цезарь с курицей", price: 590 },
+    ],
+  },
+  steaks: {
+    name: "🥩 Стейки",
+    emoji: "🔥",
+    items: [
+      { id: "st1", name: "Ребра 1 кг", price: 1480 },
+      { id: "st2", name: "Рибай", price: 1440 },
+      { id: "st3", name: "Свиная корейка", price: 650 },
+      { id: "st4", name: "Стейк говяжьей вырезки", price: 1230 },
+      { id: "st5", name: "Стейк с лососем", price: 1400 },
+      { id: "st6", name: "Стейк шато бриан", price: 1400 },
+    ],
+  },
+  street: {
+    name: "🌮 Стрит-food",
+    emoji: "🌮",
+    items: [
+      { id: "sf1", name: "Бургер с говяж. котлетой", price: 690 },
+      { id: "sf2", name: "Бургер с курицей", price: 690 },
+      { id: "sf3", name: "Кесадилья с ветчиной", price: 680 },
+      { id: "sf4", name: "Кесадилья с курицей", price: 540 },
+      { id: "sf5", name: "Кесадилья шоколад банан", price: 640 },
+    ],
+  },
+  soups: {
+    name: "🍲 Супы",
+    emoji: "🍲",
+    items: [
+      { id: "sp1", name: "Борщ", price: 580 },
+      { id: "sp2", name: "Бульон", price: 370 },
+      { id: "sp3", name: "Рамэн с говядиной", price: 560 },
+      { id: "sp4", name: "Сливочный суп", price: 470 },
+      { id: "sp5", name: "Сырный суп", price: 380 },
+      { id: "sp6", name: "Том Ям классика", price: 570 },
+      { id: "sp7", name: "Том Ям креветка", price: 790 },
+      { id: "sp8", name: "Том Ям курица", price: 520 },
+      { id: "sp9", name: "Том Ям морепродукты", price: 740 },
     ],
   },
 };
@@ -155,36 +307,31 @@ const RANKS = [
 ];
 
 // ═══ GAMIFICATION SYSTEM ═══
-// Quest templates for admin to create daily quests
-const QUEST_TEMPLATES = [
-  { id: "qt1", text: "Продай {n} кальянов", category: "hookah", icon: "🌬️", color: "#c471f5" },
-  { id: "qt2", text: "Продай {n} коктейлей", category: "cocktails", icon: "🍹", color: "#e879f9" },
-  { id: "qt3", text: "Продай {n} блюд с кухни", category: "kitchen", icon: "🍽️", color: "#f97316" },
-  { id: "qt4", text: "Собери {n} отзывов", category: "reviews", icon: "⭐", color: "#facc15" },
-  { id: "qt5", text: "Сделай {n} продаж (любых)", category: "any", icon: "🔥", color: "#22d3ee" },
-  { id: "qt6", text: "Заработай {n}₽ выручки", category: "revenue", icon: "💰", color: "#64d4aa" },
-];
+// Quest templates — generated dynamically from menu + fixed templates
+function getQuestTemplates(menu) {
+  const templates = [];
+  Object.entries(menu).forEach(([key, cat]) => {
+    templates.push({ id: "qt_" + key, text: `Продай {n} из "${cat.name}"`, category: key, icon: cat.emoji || "📦", color: "#c471f5" });
+  });
+  templates.push({ id: "qt_reviews", text: "Собери {n} отзывов", category: "reviews", icon: "⭐", color: "#facc15" });
+  templates.push({ id: "qt_any", text: "Сделай {n} продаж (любых)", category: "any", icon: "🔥", color: "#22d3ee" });
+  templates.push({ id: "qt_revenue", text: "Заработай {n}₽ выручки", category: "revenue", icon: "💰", color: "#64d4aa" });
+  return templates;
+}
 
 // Achievement definitions
 const ACHIEVEMENTS = [
   { id: "first_sale", title: "Первая кровь", desc: "Первая продажа за смену", icon: "⚔️", check: (sales) => sales.length >= 1 },
-  { id: "triple", title: "Тройной удар", desc: "3 продажи подряд за 10 минут", icon: "⚡", check: (sales) => {
+  { id: "triple", title: "Тройной удар", desc: "3 продажи за 10 минут", icon: "⚡", check: (sales) => {
     if (sales.length < 3) return false;
     const last3 = sales.slice(-3);
     return new Date(last3[2].timestamp) - new Date(last3[0].timestamp) < 600000;
   }},
   { id: "five_streak", title: "Серия x5", desc: "5 продаж за смену", icon: "🔥", check: (sales) => sales.length >= 5 },
   { id: "ten_streak", title: "Не остановить!", desc: "10 продаж за смену", icon: "💥", check: (sales) => sales.length >= 10 },
-  { id: "hookah_master", title: "Дымный мастер", desc: "Продай 3 кальяна за смену", icon: "🌬️", check: (sales) => sales.filter(s => s.id?.startsWith("h")).length >= 3 },
-  { id: "cocktail_king", title: "Коктейльный король", desc: "Продай 5 коктейлей за смену", icon: "🍹", check: (sales) => sales.filter(s => s.id?.startsWith("c")).length >= 5 },
   { id: "revenue_5k", title: "Золотой час", desc: "5000₽ выручки за смену", icon: "💰", check: (sales) => sales.reduce((s, x) => s + x.price, 0) >= 5000 },
   { id: "revenue_10k", title: "Легенда дня", desc: "10000₽ выручки за смену", icon: "👑", check: (sales) => sales.reduce((s, x) => s + x.price, 0) >= 10000 },
-  { id: "all_cats", title: "Универсал", desc: "Продай из каждой категории", icon: "🌟", check: (sales) => {
-    const hasH = sales.some(s => s.id?.startsWith("h"));
-    const hasC = sales.some(s => s.id?.startsWith("c"));
-    const hasK = sales.some(s => s.id?.startsWith("k"));
-    return hasH && hasC && hasK;
-  }},
+  { id: "revenue_20k", title: "Машина продаж", desc: "20000₽ выручки за смену", icon: "🏆", check: (sales) => sales.reduce((s, x) => s + x.price, 0) >= 20000 },
 ];
 
 function getRank(bonus) {
@@ -286,7 +433,8 @@ function Confetti({ active }) {
 /* ════════════════════════════════════════════ */
 /* ─── ADMIN PANEL ─── */
 /* ════════════════════════════════════════════ */
-function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans, dailyQuests, setDailyQuests, adminPinHash, setAdminPinHash }) {
+function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans, dailyQuests, setDailyQuests, adminPinHash, setAdminPinHash, menuCategories, setMenuCategories, bonusPercent, setBonusPercent }) {
+  const QUEST_TEMPLATES = getQuestTemplates(menuCategories);
   const [adminView, setAdminView] = useState("dashboard");
   const [selectedEmpId, setSelectedEmpId] = useState(null);
   const [viewingPhoto, setViewingPhoto] = useState(null);
@@ -424,13 +572,13 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
     const todaySales = (emp?.sales || []).filter(s => new Date(s.timestamp).toDateString() === now.toDateString());
     const todayReviews = (emp?.reviews || []).filter(r => new Date(r.timestamp).toDateString() === now.toDateString());
     
-    if (quest.category === "hookah") return todaySales.filter(s => s.id?.startsWith("h")).length;
-    if (quest.category === "cocktails") return todaySales.filter(s => s.id?.startsWith("c")).length;
-    if (quest.category === "kitchen") return todaySales.filter(s => s.id?.startsWith("k")).length;
     if (quest.category === "reviews") return todayReviews.length;
     if (quest.category === "any") return todaySales.length;
     if (quest.category === "revenue") return todaySales.reduce((s, x) => s + x.price, 0);
-    return 0;
+    // Dynamic category check
+    const catItems = menuCategories[quest.category]?.items || [];
+    const catItemIds = catItems.map(i => i.id);
+    return todaySales.filter(s => catItemIds.includes(s.id)).length;
   };
 
   // Calculate sales count for a plan
@@ -438,7 +586,7 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
     const now = new Date();
     const salesInPeriod = employees.flatMap(e => (e.sales || []).filter(s => {
       const d = new Date(s.timestamp);
-      const catItems = CATEGORIES[plan.category]?.items || [];
+      const catItems = menuCategories[plan.category]?.items || [];
       const inCategory = catItems.some(item => item.id === s.id);
       if (!inCategory) return false;
       if (plan.period === "today") return d.toDateString() === now.toDateString();
@@ -559,7 +707,7 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
 
       {/* Nav */}
       <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
-        {[{ k: "dashboard", l: "📊 Обзор" }, { k: "employees", l: "👥 Сотрудники" }, { k: "quests", l: "⚔️ Задания" }, { k: "plans", l: "🎯 Планы" }, { k: "history", l: "📋 История" }].map((t) => (
+        {[{ k: "dashboard", l: "📊 Обзор" }, { k: "employees", l: "👥 Сотрудники" }, { k: "quests", l: "⚔️ Задания" }, { k: "plans", l: "🎯 Планы" }, { k: "menu", l: "📋 Меню" }, { k: "history", l: "📜 История" }].map((t) => (
           <button key={t.k} onClick={() => { setAdminView(t.k); setSelectedEmpId(null); }} style={{ flex: 1, padding: "10px 6px", borderRadius: 12, cursor: "pointer", fontSize: "0.75rem", fontWeight: 700, fontFamily: "'DM Sans', sans-serif", background: adminView === t.k ? "linear-gradient(135deg, rgba(196,113,245,0.2), rgba(196,113,245,0.08))" : "rgba(255,255,255,0.1)", border: adminView === t.k ? "1px solid rgba(196,113,245,0.3)" : "1px solid rgba(255,255,255,0.1)", color: adminView === t.k ? "#c471f5" : "#6b7094" }}>{t.l}</button>
         ))}
       </div>
@@ -809,7 +957,7 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
             const pct = Math.min((progress / plan.target) * 100, 100);
             const done = progress >= plan.target;
             const periodLabel = { today: "Сегодня", week: "Неделя", month: "Месяц" }[plan.period] || plan.period;
-            const catInfo = CATEGORIES[plan.category];
+            const catInfo = menuCategories[plan.category];
             return (
               <div key={plan.id} style={{ ...cardStyle, borderRadius: 18, padding: 18, marginBottom: 12, border: done ? "1px solid rgba(34,211,238,0.4)" : cardStyle.border }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
@@ -845,7 +993,7 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
                     const empSales = (emp.sales || []).filter(s => {
                       const d = new Date(s.timestamp);
                       const now = new Date();
-                      const catItems = CATEGORIES[plan.category]?.items || [];
+                      const catItems = menuCategories[plan.category]?.items || [];
                       const inCat = catItems.some(item => item.id === s.id);
                       if (!inCat) return false;
                       if (plan.period === "today") return d.toDateString() === now.toDateString();
@@ -914,7 +1062,7 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
 
             <div style={{ fontSize: "0.8rem", color: "#6b7094", marginBottom: 8 }}>Категория</div>
             <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
-              {Object.entries(CATEGORIES).map(([key, cat]) => (
+              {Object.entries(menuCategories).map(([key, cat]) => (
                 <button key={key} onClick={() => setPlanCategory(key)} style={{
                   flex: 1, padding: "12px 6px", borderRadius: 12, cursor: "pointer", textAlign: "center",
                   fontSize: "0.75rem", fontWeight: 700, fontFamily: "'DM Sans', sans-serif",
@@ -1034,6 +1182,84 @@ function AdminPanel({ employees, setEmployees, onExit, salesPlans, setSalesPlans
         </div>
       )}
 
+      {/* ═══ MENU MANAGEMENT TAB ═══ */}
+      {adminView === "menu" && (
+        <div>
+          <div style={{ fontSize: "0.8rem", color: "#8b8fa3", textTransform: "uppercase", letterSpacing: 2, marginBottom: 16 }}>Управление меню</div>
+
+          {/* Bonus percent setting */}
+          <div style={{ background: "rgba(196,113,245,0.08)", border: "1px solid rgba(196,113,245,0.2)", borderRadius: 16, padding: 16, marginBottom: 20 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+              <div>
+                <div style={{ fontWeight: 700, color: "#eef0ff", fontSize: "0.9rem" }}>💰 Бонус сотрудникам</div>
+                <div style={{ fontSize: "0.7rem", color: "#6b7094", marginTop: 4 }}>Процент от цены каждой продажи</div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                {[1, 2, 3, 5, 7, 10].map(p => (
+                  <button key={p} onClick={() => setBonusPercent(p)} style={{
+                    padding: "8px 12px", borderRadius: 10, cursor: "pointer",
+                    fontSize: "0.85rem", fontWeight: 800, fontFamily: "'DM Sans', sans-serif",
+                    background: bonusPercent === p ? "linear-gradient(135deg, #c471f5, #a855f7)" : "rgba(255,255,255,0.06)",
+                    border: bonusPercent === p ? "none" : "1px solid rgba(255,255,255,0.08)",
+                    color: bonusPercent === p ? "#0d0b1a" : "#6b7094",
+                  }}>{p}%</button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Categories list */}
+          {Object.entries(menuCategories).map(([catKey, cat]) => (
+            <div key={catKey} style={{ marginBottom: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <div style={{ fontWeight: 800, color: "#eef0ff", fontSize: "0.9rem" }}>{cat.emoji || "📂"} {cat.name} <span style={{ color: "#6b7094", fontWeight: 500, fontSize: "0.75rem" }}>({cat.items?.length || 0})</span></div>
+                <button onClick={() => {
+                  const name = prompt("Название позиции:");
+                  if (!name) return;
+                  const price = parseInt(prompt("Цена (₽):") || "0");
+                  if (!price) return;
+                  const id = catKey.slice(0,2) + "_" + Date.now().toString(36);
+                  setMenuCategories(prev => ({
+                    ...prev,
+                    [catKey]: { ...prev[catKey], items: [...(prev[catKey].items || []), { id, name: sanitize(name), price }] }
+                  }));
+                }} style={{ padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: "0.7rem", fontWeight: 700, fontFamily: "'DM Sans', sans-serif", background: "rgba(34,211,238,0.1)", border: "1px solid rgba(34,211,238,0.3)", color: "#22d3ee" }}>+ Добавить</button>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {(cat.items || []).map(item => (
+                  <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 10 }}>
+                    <div style={{ color: "#eef0ff", fontSize: "0.8rem", fontWeight: 600, flex: 1 }}>{item.name}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <div style={{ color: "#c471f5", fontSize: "0.8rem", fontWeight: 700 }}>{item.price}₽</div>
+                      <div style={{ color: "#6b7094", fontSize: "0.65rem" }}>+{Math.round(item.price * bonusPercent / 100)}₽</div>
+                      <button onClick={() => {
+                        if (!confirm(`Удалить "${item.name}"?`)) return;
+                        setMenuCategories(prev => ({
+                          ...prev,
+                          [catKey]: { ...prev[catKey], items: prev[catKey].items.filter(i => i.id !== item.id) }
+                        }));
+                      }} style={{ width: 24, height: 24, borderRadius: 6, border: "1px solid rgba(255,80,80,0.2)", background: "rgba(255,80,80,0.08)", color: "#ff5050", cursor: "pointer", fontSize: "0.7rem", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+
+          {/* Add new category */}
+          <button onClick={() => {
+            const name = prompt("Название новой категории:");
+            if (!name) return;
+            const emoji = prompt("Эмодзи (например 🍕):") || "📂";
+            const key = "cat_" + Date.now().toString(36);
+            setMenuCategories(prev => ({
+              ...prev,
+              [key]: { name: emoji + " " + sanitize(name), emoji, items: [] }
+            }));
+          }} style={{ width: "100%", padding: 14, borderRadius: 14, cursor: "pointer", fontSize: "0.85rem", fontWeight: 700, fontFamily: "'DM Sans', sans-serif", background: "rgba(196,113,245,0.1)", border: "1px solid rgba(196,113,245,0.2)", color: "#c471f5", marginTop: 8 }}>+ Добавить категорию</button>
+        </div>
+      )}
+
       {/* Change Admin PIN Modal */}
       {showChangePinModal && (
         <div onClick={() => { setShowChangePinModal(false); setNewPinValue(""); setConfirmPinValue(""); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 9000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
@@ -1097,10 +1323,9 @@ export default function HookahSalesApp() {
   const [loginError, setLoginError] = useState(false);
   const [salesPlans, setSalesPlans] = useState([]);
   const [dailyQuests, setDailyQuests] = useState([]);
+  const [menuCategories, setMenuCategories] = useState(DEFAULT_MENU);
+  const [bonusPercent, setBonusPercent] = useState(DEFAULT_BONUS_PERCENT);
   const [achievementPopup, setAchievementPopup] = useState(null);
-  const [streakCount, setStreakCount] = useState(0);
-  const [lastSaleTime, setLastSaleTime] = useState(null);
-  const [comboTimer, setComboTimer] = useState(0);
   // Security
   const [adminPinHash, setAdminPinHash] = useState(simpleHash(DEFAULT_ADMIN_PIN));
   const [adminAttempts, setAdminAttempts] = useState(() => parseInt(localStorage.getItem("n_adminAttempts") || "0"));
@@ -1134,6 +1359,8 @@ export default function HookahSalesApp() {
         setEmployees(merged);
         if (data.salesPlans) setSalesPlans(data.salesPlans);
         if (data.dailyQuests) setDailyQuests(data.dailyQuests);
+        if (data.menuCategories) setMenuCategories(data.menuCategories);
+        if (data.bonusPercent !== undefined) setBonusPercent(data.bonusPercent);
         if (data.adminPinHash) setAdminPinHash(data.adminPinHash);
         // Restore currentEmployee from localStorage
         const localCur = localStorage.getItem("nargilya-current-emp");
@@ -1141,7 +1368,7 @@ export default function HookahSalesApp() {
         _dataLoaded = true;
         // Save migrated data immediately
         if (needsMigration) {
-          saveToCloud({ employees: emps, salesPlans: data.salesPlans || [], dailyQuests: data.dailyQuests || [], adminPinHash: data.adminPinHash || simpleHash(DEFAULT_ADMIN_PIN) });
+          saveToCloud({ employees: emps, salesPlans: data.salesPlans || [], dailyQuests: data.dailyQuests || [], menuCategories: data.menuCategories || DEFAULT_MENU, bonusPercent: data.bonusPercent ?? DEFAULT_BONUS_PERCENT, adminPinHash: data.adminPinHash || simpleHash(DEFAULT_ADMIN_PIN) });
         }
       }
       setLoading(false);
@@ -1160,10 +1387,10 @@ export default function HookahSalesApp() {
   // Save to cloud when employees or salesPlans change
   useEffect(() => {
     if (loading || !_dataLoaded) return;
-    saveToCloud({ employees, salesPlans, dailyQuests, adminPinHash });
+    saveToCloud({ employees, salesPlans, dailyQuests, menuCategories, bonusPercent, adminPinHash });
     // Also save full data with photos locally
     saveLocalPhotos({ employees, salesPlans, dailyQuests });
-  }, [employees, salesPlans, dailyQuests, adminPinHash]);
+  }, [employees, salesPlans, dailyQuests, menuCategories, bonusPercent, adminPinHash]);
 
   // Save currentEmployee to localStorage (device-specific)
   useEffect(() => {
@@ -1210,7 +1437,7 @@ export default function HookahSalesApp() {
 
   const addSale = (item, photo) => {
     const mult = employee?.bonusMultiplier || 0;
-    const baseBonus = item.bonus;
+    const baseBonus = Math.round(item.price * bonusPercent / 100);
     const extraBonus = mult > 0 ? Math.round(baseBonus * mult / 100) : 0;
     const finalBonus = baseBonus + extraBonus;
 
@@ -1239,19 +1466,17 @@ export default function HookahSalesApp() {
     setLastSale(item);
     setTimeout(() => setLastSale(null), 2000);
 
-    // ═══ GAMIFICATION: Streak & Combo (only cocktails & kitchen) ═══
-    const isComboItem = item.id?.startsWith("c") || item.id?.startsWith("k");
-    if (isComboItem) {
-      const now = Date.now();
-      if (lastSaleTime && now - lastSaleTime < 1800000) { // 30 min combo window
-        setStreakCount(prev => prev + 1);
-        setComboTimer(1800);
-      } else {
-        setStreakCount(1);
-        setComboTimer(1800);
-      }
-      setLastSaleTime(now);
-    }
+    // ═══ GAMIFICATION: Sound & vibration on sale ═══
+    try { navigator.vibrate?.(50); } catch(e) {}
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator(); const g = ctx.createGain();
+      osc.connect(g); g.connect(ctx.destination);
+      osc.type = "sine"; osc.frequency.setValueAtTime(880, ctx.currentTime);
+      g.gain.setValueAtTime(0.15, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
+      osc.start(); osc.stop(ctx.currentTime + 0.15);
+    } catch(e) {}
 
     // Check achievements after sale is added
     const updatedEmp = employees.find(e => e.id === currentEmployee);
@@ -1261,6 +1486,19 @@ export default function HookahSalesApp() {
         const wasEarned = (updatedEmp.earnedAchievements || []).includes(ach.id + "_" + new Date().toDateString());
         if (!wasEarned && ach.check(allTodaySales)) {
           setAchievementPopup(ach);
+          // Sound & vibration for achievement
+          try { navigator.vibrate?.([100, 50, 100, 50, 200]); } catch(e) {}
+          try {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const osc = ctx.createOscillator(); const g = ctx.createGain();
+            osc.connect(g); g.connect(ctx.destination);
+            osc.type = "sine"; osc.frequency.setValueAtTime(523, ctx.currentTime);
+            osc.frequency.setValueAtTime(659, ctx.currentTime + 0.1);
+            osc.frequency.setValueAtTime(784, ctx.currentTime + 0.2);
+            g.gain.setValueAtTime(0.3, ctx.currentTime);
+            g.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+            osc.start(); osc.stop(ctx.currentTime + 0.5);
+          } catch(e) {}
           setTimeout(() => setAchievementPopup(null), 3500);
           // Mark as earned today
           setEmployees(prev => prev.map(e =>
@@ -1286,12 +1524,14 @@ export default function HookahSalesApp() {
 
       // Calculate progress
       let prog = 0;
-      if (quest.category === "hookah") prog = allSalesAfter.filter(s => s.id?.startsWith("h")).length;
-      else if (quest.category === "cocktails") prog = allSalesAfter.filter(s => s.id?.startsWith("c")).length;
-      else if (quest.category === "kitchen") prog = allSalesAfter.filter(s => s.id?.startsWith("k")).length;
-      else if (quest.category === "reviews") prog = todayRevsAfter;
+      if (quest.category === "reviews") prog = todayRevsAfter;
       else if (quest.category === "any") prog = allSalesAfter.length;
       else if (quest.category === "revenue") prog = todayRevAfter;
+      else {
+        const catItems = menuCategories[quest.category]?.items || [];
+        const catItemIds = catItems.map(i => i.id);
+        prog = allSalesAfter.filter(s => catItemIds.includes(s.id)).length;
+      }
 
       if (prog >= quest.target) {
         // Pay reward — add bonus sale
@@ -1312,7 +1552,7 @@ export default function HookahSalesApp() {
       if (plan.rewardPaid?.[currentEmployee]) return plan;
 
       // Check if this employee's sale contributes to the plan
-      const catItems = CATEGORIES[plan.category]?.items || [];
+      const catItems = menuCategories[plan.category]?.items || [];
       const inCat = catItems.some(ci => ci.id === sale.id);
       if (!inCat) return plan;
 
@@ -1330,7 +1570,7 @@ export default function HookahSalesApp() {
       // +1 for current sale that's being added
       if (allPlanSales.length + 1 >= plan.target) {
         const rewardSale = {
-          id: "reward", name: `🏆 План выполнен: ${CATEGORIES[plan.category]?.name || plan.category}`, price: 0,
+          id: "reward", name: `🏆 План выполнен: ${menuCategories[plan.category]?.name || plan.category}`, price: 0,
           bonus: plan.reward, baseBonus: plan.reward, multiplier: 0,
           timestamp: new Date().toISOString(), saleId: "pr_" + plan.id + "_" + Date.now(),
         };
@@ -1519,33 +1759,22 @@ export default function HookahSalesApp() {
   // Category sales count for today
   const getCategorySalesToday = (catKey) =>
     todaySales.filter((s) =>
-      CATEGORIES[catKey].items.some((item) => item.id === s.id)
+      menuCategories[catKey].items.some((item) => item.id === s.id)
     ).length;
 
-  // Combo timer countdown
-  useEffect(() => {
-    if (comboTimer <= 0) return;
-    const interval = setInterval(() => {
-      setComboTimer(prev => {
-        if (prev <= 1) { setStreakCount(0); return 0; }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [comboTimer]);
+  // Combo system removed — simplified
 
   // Today's active quests (for current employee or all)
   const todayQuests = dailyQuests.filter(q => q.date === new Date().toDateString() && (q.assignee === "all" || q.assignee === currentEmployee));
 
   // Quest progress for current employee
   const getMyQuestProgress = (quest) => {
-    if (quest.category === "hookah") return todaySales.filter(s => s.id?.startsWith("h")).length;
-    if (quest.category === "cocktails") return todaySales.filter(s => s.id?.startsWith("c")).length;
-    if (quest.category === "kitchen") return todaySales.filter(s => s.id?.startsWith("k")).length;
     if (quest.category === "reviews") return todayReviews.length;
     if (quest.category === "any") return todaySales.length;
     if (quest.category === "revenue") return todayRevenue;
-    return 0;
+    const catItems = menuCategories[quest.category]?.items || [];
+    const catItemIds = catItems.map(i => i.id);
+    return todaySales.filter(s => catItemIds.includes(s.id)).length;
   };
 
   // Today's earned achievements
@@ -1644,7 +1873,7 @@ export default function HookahSalesApp() {
 
   /* ═══ ADMIN MODE ═══ */
   if (isAdmin && adminSessionToken) {
-    return <AdminPanel employees={employees} setEmployees={setEmployees} onExit={() => { setIsAdmin(false); setAdminSessionToken(null); }} salesPlans={salesPlans} setSalesPlans={setSalesPlans} dailyQuests={dailyQuests} setDailyQuests={setDailyQuests} adminPinHash={adminPinHash} setAdminPinHash={setAdminPinHash} />;
+    return <AdminPanel employees={employees} setEmployees={setEmployees} onExit={() => { setIsAdmin(false); setAdminSessionToken(null); }} salesPlans={salesPlans} setSalesPlans={setSalesPlans} dailyQuests={dailyQuests} setDailyQuests={setDailyQuests} adminPinHash={adminPinHash} setAdminPinHash={setAdminPinHash} menuCategories={menuCategories} setMenuCategories={setMenuCategories} bonusPercent={bonusPercent} setBonusPercent={setBonusPercent} />;
   }
 
   return (
@@ -2306,36 +2535,6 @@ export default function HookahSalesApp() {
                 </div>
 
                 {/* ═══ STREAK & COMBO BAR ═══ */}
-                {streakCount > 1 && (
-                  <div style={{
-                    background: streakCount >= 5 ? "linear-gradient(135deg, rgba(249,115,22,0.15), rgba(234,179,8,0.1))" : "linear-gradient(135deg, rgba(196,113,245,0.1), rgba(56,189,248,0.06))",
-                    border: streakCount >= 5 ? "1px solid rgba(249,115,22,0.3)" : "1px solid rgba(196,113,245,0.2)",
-                    borderRadius: 16, padding: "12px 16px", marginBottom: 16,
-                    display: "flex", alignItems: "center", justifyContent: "space-between",
-                    animation: "saleFlash 0.4s ease",
-                  }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <div style={{ fontSize: "1.5rem", animation: "pulse 1s ease infinite" }}>
-                        {streakCount >= 10 ? "💥" : streakCount >= 5 ? "🔥" : streakCount >= 3 ? "⚡" : "✨"}
-                      </div>
-                      <div>
-                        <div style={{ fontWeight: 800, fontSize: "0.95rem", color: streakCount >= 5 ? "#f97316" : "#c471f5" }}>
-                          КОМБО x{streakCount}!
-                        </div>
-                        <div style={{ fontSize: "0.65rem", color: "#8b8fa3" }}>
-                          {streakCount >= 10 ? "НЕВЕРОЯТНО!" : streakCount >= 5 ? "Огненная серия!" : "Коктейли + Кухня 🍹🍽️"}
-                        </div>
-                      </div>
-                    </div>
-                    <div style={{ textAlign: "right" }}>
-                      <div style={{ fontSize: "0.7rem", color: "#6b7094" }}>Таймер</div>
-                      <div style={{ fontFamily: "'Outfit', sans-serif", fontWeight: 800, fontSize: "1rem", color: comboTimer < 300 ? "#ff5050" : "#22d3ee" }}>
-                        {Math.floor(comboTimer / 60)}:{String(comboTimer % 60).padStart(2, "0")}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
                 {/* ═══ DAILY QUESTS TRACKER (Game-style quest bar) ═══ */}
                 {todayQuests.length > 0 && (
                   <div style={{
@@ -2423,7 +2622,7 @@ export default function HookahSalesApp() {
 
                 {/* Quick stats pills */}
                 <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
-                  {Object.entries(CATEGORIES).map(([key, cat]) => (
+                  {Object.entries(menuCategories).map(([key, cat]) => (
                     <div
                       key={key}
                       style={{
@@ -2462,14 +2661,14 @@ export default function HookahSalesApp() {
                 </div>
 
                 {/* Category Selector */}
-                <div style={{ display: "flex", gap: 8, marginBottom: 20, background: "rgba(255,255,255,0.08)", borderRadius: 18, padding: 4 }}>
-                  {Object.entries(CATEGORIES).map(([key, cat]) => (
+                <div style={{ display: "flex", gap: 6, marginBottom: 20, background: "rgba(255,255,255,0.08)", borderRadius: 18, padding: 4, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+                  {Object.entries(menuCategories).map(([key, cat]) => (
                     <button
                       key={key}
                       onClick={() => setSelectedCategory(key)}
                       style={{
-                        flex: 1,
-                        padding: "12px 8px",
+                        minWidth: 70,
+                        padding: "10px 8px",
                         background: selectedCategory === key
                           ? "linear-gradient(135deg, rgba(196,113,245,0.2), rgba(56,189,248,0.1))"
                           : "transparent",
@@ -2479,14 +2678,15 @@ export default function HookahSalesApp() {
                         borderRadius: 14,
                         color: selectedCategory === key ? "#f0abfc" : "#6b7094",
                         cursor: "pointer",
-                        fontSize: "0.75rem",
+                        fontSize: "0.65rem",
                         fontWeight: selectedCategory === key ? 800 : 600,
                         fontFamily: "'DM Sans', sans-serif",
-                        transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-                        boxShadow: selectedCategory === key ? "0 4px 20px rgba(196,113,245,0.25), inset 0 1px 0 rgba(255,255,255,0.09)" : "none",
+                        transition: "all 0.2s",
+                        whiteSpace: "nowrap",
+                        flexShrink: 0,
                       }}
                     >
-                      <div style={{ fontSize: "1.3rem", marginBottom: 2 }}>{cat.emoji}</div>
+                      <div style={{ fontSize: "1.1rem", marginBottom: 2 }}>{cat.emoji}</div>
                       {cat.name.replace(/[^\w\sа-яА-ЯёЁ]/g, "").trim()}
                     </button>
                   ))}
@@ -2494,7 +2694,7 @@ export default function HookahSalesApp() {
 
                 {/* Items Grid */}
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {CATEGORIES[selectedCategory].items.map((item) => {
+                  {(menuCategories[selectedCategory]?.items || []).map((item) => {
                     const count = todaySales.filter((s) => s.id === item.id).length;
                     return (
                       <button
@@ -2543,7 +2743,7 @@ export default function HookahSalesApp() {
                         >
                           <div style={{ fontSize: "0.6rem", color: "#c471f5", textTransform: "uppercase", letterSpacing: 1, fontWeight: 700 }}>бонус</div>
                           <div style={{ fontWeight: 800, color: "#f0abfc", fontSize: "1rem", textShadow: "0 0 10px rgba(196,113,245,0.4)" }}>
-                            +{item.bonus + (employee?.bonusMultiplier ? Math.round(item.bonus * employee.bonusMultiplier / 100) : 0)}₽
+                            +{Math.round(item.price * bonusPercent / 100) + (employee?.bonusMultiplier ? Math.round(Math.round(item.price * bonusPercent / 100) * employee.bonusMultiplier / 100) : 0)}₽
                           </div>
                           {employee?.bonusMultiplier > 0 && (
                             <div style={{ fontSize: "0.55rem", color: "#22d3ee", fontWeight: 600 }}>+{employee.bonusMultiplier}%</div>
@@ -2610,7 +2810,7 @@ export default function HookahSalesApp() {
                           {pendingSaleItem.name}
                         </div>
                         <div style={{ fontSize: "0.85rem", color: "#8b8fa3", marginTop: 2 }}>
-                          {formatMoney(pendingSaleItem.price)} · бонус +{pendingSaleItem.bonus}₽
+                          {formatMoney(pendingSaleItem.price)} · бонус +{Math.round(pendingSaleItem.price * bonusPercent / 100)}₽
                         </div>
                       </div>
 
@@ -2638,7 +2838,7 @@ export default function HookahSalesApp() {
                         <div style={{ textAlign: "center", marginBottom: 16, padding: "10px 14px", background: "rgba(34,211,238,0.08)", border: "1px solid rgba(34,211,238,0.15)", borderRadius: 12 }}>
                           <div style={{ fontSize: "0.75rem", color: "#6b7094" }}>Итого</div>
                           <div style={{ fontSize: "1.1rem", fontWeight: 800, color: "#22d3ee" }}>
-                            {formatMoney(pendingSaleItem.price * saleQuantity)} · бонус +{pendingSaleItem.bonus * saleQuantity}₽
+                            {formatMoney(pendingSaleItem.price * saleQuantity)} · бонус +{Math.round(pendingSaleItem.price * bonusPercent / 100) * saleQuantity}₽
                           </div>
                         </div>
                       )}
@@ -3195,7 +3395,7 @@ export default function HookahSalesApp() {
                 </div>
 
                 {/* Stats by category */}
-                {Object.entries(CATEGORIES).map(([key, cat]) => {
+                {Object.entries(menuCategories).map(([key, cat]) => {
                   const catSales = employee.sales.filter((s) =>
                     cat.items.some((item) => item.id === s.id)
                   );
@@ -3297,7 +3497,7 @@ export default function HookahSalesApp() {
                       // My contribution to this plan
                       const mySales = (employee.sales || []).filter(s => {
                         const d = new Date(s.timestamp);
-                        const catItems = CATEGORIES[plan.category]?.items || [];
+                        const catItems = menuCategories[plan.category]?.items || [];
                         const inCat = catItems.some(item => item.id === s.id);
                         if (!inCat) return false;
                         if (plan.period === "today") return d.toDateString() === now.toDateString();
@@ -3308,7 +3508,7 @@ export default function HookahSalesApp() {
                       // Total team progress
                       const teamTotal = employees.flatMap(e => (e.sales || []).filter(s => {
                         const d = new Date(s.timestamp);
-                        const catItems = CATEGORIES[plan.category]?.items || [];
+                        const catItems = menuCategories[plan.category]?.items || [];
                         const inCat = catItems.some(item => item.id === s.id);
                         if (!inCat) return false;
                         if (plan.period === "today") return d.toDateString() === now.toDateString();
@@ -3319,7 +3519,7 @@ export default function HookahSalesApp() {
                       const pct = Math.min((teamTotal / plan.target) * 100, 100);
                       const done = teamTotal >= plan.target;
                       const periodLabel = { today: "Сегодня", week: "Неделя", month: "Месяц" }[plan.period];
-                      const catInfo = CATEGORIES[plan.category];
+                      const catInfo = menuCategories[plan.category];
 
                       return (
                         <div key={plan.id} style={{
