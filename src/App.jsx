@@ -1465,7 +1465,7 @@ function EmployeeDashboard({
   const [receiptDuplicateError, setReceiptDuplicateError] = useState(false);
   const [achievementPopup, setAchievementPopup] = useState(null);
 
-  const employee = employees.find((e) => e.id === currentEmployee);
+  // employee comes from props
 
   const empShiftBonus = (emp) => (emp.shifts || []).reduce((s, sh) => s + (sh.bonus || 0), 0);
   const empTotalHours = (emp) => (emp.shifts || []).reduce((s, sh) => s + (sh.hours || 0), 0);
