@@ -2,6 +2,7 @@
   "name": "nargilya-sales",
   "version": "2.1.0",
   "private": true,
+  "homepage": "https://mishasimf893-creator.github.io/nargilya-sales",
   "dependencies": {
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
