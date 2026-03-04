@@ -1,10 +1,10 @@
 {
   "files": {
-    "main.js": "/static/js/main.72c7eea0.js",
-    "index.html": "/index.html",
-    "main.72c7eea0.js.map": "/static/js/main.72c7eea0.js.map"
+    "main.js": "/nargilya-sales/static/js/main.1be12e93.js",
+    "index.html": "/nargilya-sales/index.html",
+    "main.1be12e93.js.map": "/nargilya-sales/static/js/main.1be12e93.js.map"
   },
   "entrypoints": [
-    "static/js/main.72c7eea0.js"
+    "static/js/main.1be12e93.js"
   ]
 }
